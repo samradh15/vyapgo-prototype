@@ -1,47 +1,52 @@
 'use client';
 
-import type { Metadata } from 'next';
-import { devanagari, notoSans } from '@/lib/yantra-fonts'
-import { Inter } from 'next/font/google';
 import './globals.css';
+import { Inter } from 'next/font/google';
 import Navigation from '@/components/layout/navigation';
 import { usePathname } from 'next/navigation';
+// If you use these font vars elsewhere, keep them; otherwise you can remove.
+import { devanagari, notoSans } from '@/lib/yantra-fonts';
 
 const inter = Inter({
   subsets: ['latin'],
   display: 'swap',
-  variable: '--font-inter'
+  variable: '--font-inter',
 });
 
-function LayoutContent({ children }: { children: React.ReactNode }) {
+export default function RootLayout({ children }: { children: React.ReactNode }) {
   const pathname = usePathname() || '/';
 
-  // ✅ Hide global nav on ANY marketplace route (e.g., /marketplace, /marketplace/search, /marketplace/anything)
-  const inMarketplace = pathname.startsWith('/marketplace');
+  // Auth pages (no header)
+  const isAuth =
+    pathname === '/login' ||
+    pathname === '/signup' ||
+    pathname.startsWith('/auth');
 
-  // Keep your other “no-nav” pages
-  const hideNav =
-    inMarketplace ||
+  // Fullscreen/Studio style pages (no header)
+  const isFullscreen =
+    pathname.startsWith('/marketplace') ||
     pathname === '/create-app' ||
     pathname === '/model' ||
     pathname === '/studio' ||
     pathname === '/model/studio';
 
-  return (
-    <body className="font-sans antialiased bg-white text-gray-900 min-h-screen">
-      {!hideNav && <Navigation />}
-      {/* Only add top padding when the global nav is visible */}
-      <div className={hideNav ? '' : 'pt-20'}>
-        {children}
-      </div>
-    </body>
-  );
-}
+  const hideNav = isAuth || isFullscreen;
 
-export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="en" className={inter.variable}>
-      <LayoutContent>{children}</LayoutContent>
+    <html
+      lang="en"
+      className={[
+        inter.variable,
+        (devanagari as any)?.variable ?? '',
+        (notoSans as any)?.variable ?? '',
+      ].join(' ')}
+    >
+      {/* Beige site background, no white band */}
+      <body className="min-h-screen bg-[#F3EBDD] text-gray-900 antialiased font-sans">
+        {!hideNav && <Navigation />}
+        {/* Offset only when header is present */}
+        <div className={hideNav ? '' : 'pt-20'}>{children}</div>
+      </body>
     </html>
   );
 }

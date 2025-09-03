@@ -190,46 +190,7 @@ export default function PricingSection() {
           ))}
         </div>
 
-        {/* VyapMandi Highlight */}
-        <motion.div
-          className="mt-20 text-center bg-gradient-to-r from-orange-50 via-yellow-50 to-green-50 rounded-3xl p-10 border border-orange-200"
-          initial={{ opacity: 0, y: 30 }}
-          whileInView={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.8 }}
-          viewport={{ once: true }}
-        >
-          <h3 className="text-3xl font-bold text-gray-900 mb-4">
-            Free VyapMandi Marketplace Access
-          </h3>
-          <p className="text-xl text-gray-600 mb-6 max-w-3xl mx-auto">
-            Every plan includes free registration to VyapMandi - India's premier B2B+B2C marketplace 
-            where shopkeepers connect, trade, and grow together.
-          </p>
-          <div className="grid md:grid-cols-2 gap-8 max-w-4xl mx-auto">
-            <div className="flex items-center space-x-4">
-              <div className="w-12 h-12 bg-orange-100 rounded-xl flex items-center justify-center">
-                <svg className="w-6 h-6 text-orange-600" fill="currentColor" viewBox="0 0 24 24">
-                  <path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/>
-                </svg>
-              </div>
-              <div>
-                <h4 className="font-semibold text-gray-900">B2B Trading</h4>
-                <p className="text-gray-600">Wholesale between shopkeepers</p>
-              </div>
-            </div>
-            <div className="flex items-center space-x-4">
-              <div className="w-12 h-12 bg-green-100 rounded-xl flex items-center justify-center">
-                <svg className="w-6 h-6 text-green-600" fill="currentColor" viewBox="0 0 24 24">
-                  <path d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z"/>
-                </svg>
-              </div>
-              <div>
-                <h4 className="font-semibold text-gray-900">B2C Sales</h4>
-                <p className="text-gray-600">Direct customer reach</p>
-              </div>
-            </div>
-          </div>
-        </motion.div>
+        
       </div>
     </section>
   );
