@@ -4,7 +4,8 @@ import './globals.css';
 import { Inter } from 'next/font/google';
 import Navigation from '@/components/layout/navigation';
 import { usePathname } from 'next/navigation';
-// If you use these font vars elsewhere, keep them; otherwise you can remove.
+import { AuthProvider } from '@/contexts/auth-context';
+// Keep these if you use the font variables elsewhere
 import { devanagari, notoSans } from '@/lib/yantra-fonts';
 
 const inter = Inter({
@@ -43,9 +44,11 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
     >
       {/* Beige site background, no white band */}
       <body className="min-h-screen bg-[#F3EBDD] text-gray-900 antialiased font-sans">
-        {!hideNav && <Navigation />}
-        {/* Offset only when header is present */}
-        <div className={hideNav ? '' : 'pt-20'}>{children}</div>
+        <AuthProvider>
+          {!hideNav && <Navigation />}
+          {/* Offset only when header is present */}
+          <div className={hideNav ? '' : 'pt-20'}>{children}</div>
+        </AuthProvider>
       </body>
     </html>
   );

@@ -3,11 +3,21 @@
 import React, { useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import Image from 'next/image';
+import { useRouter } from 'next/navigation';
+import {
+  ensureRecaptcha,
+  sendOtp,
+  // old simple helpers still exist, but we’ll use the detailed ones below:
+  signInWithGoogleDetailed,
+  signInWithAppleDetailed,
+  verifyOtpDetailed,
+} from '@/lib/auth-client';
 
 /** ---------- Theme tokens ---------- */
 const BG = '#F6F0E6';
 const OUTER_BORDER = 'rgba(251,191,36,0.35)'; // Amber
 const BRAND_GRADIENT = 'linear-gradient(90deg, #f97316, #f59e0b, #10b981)';
+const OTP_LEN = 6;
 
 /** ---------- Small helpers ---------- */
 function BrandRow({ label = 'VyapGO App' }) {
@@ -84,6 +94,7 @@ function AutoPreview() {
                 tab === t ? 'text-white' : 'text-white/55'
               } relative transition-colors`}
               onClick={() => setTab(t)}
+              aria-label={`Open ${t}`}
             >
               {t === 'inventory' ? 'Inventory' : t === 'sales' ? 'Sales' : 'Staff'}
               {tab === t && (
@@ -223,8 +234,106 @@ function AutoPreview() {
   );
 }
 
-/** ---------- Right-side signup panel ---------- */
+/** ---------- Right-side signup panel (wired, new-user only popup) ---------- */
 function SignupPanel() {
+  const router = useRouter();
+  const [dial, setDial] = useState('+91');
+  const [phone, setPhone] = useState('');
+  const [otpSent, setOtpSent] = useState(false);
+  const [code, setCode] = useState('');
+  const [agree, setAgree] = useState(false);
+  const [loading, setLoading] =
+    useState<null | 'google' | 'apple' | 'otp-send' | 'otp-verify'>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    ensureRecaptcha('recaptcha-container');
+  }, []);
+
+  const fullPhone = `${dial}${phone.replace(/\D/g, '')}`;
+
+  // Redirect helper: mark onboarding only if new
+  function afterAuth(isNewUser: boolean) {
+    try {
+      if (isNewUser) {
+        localStorage.setItem('vyap:onboarding:pending', '1');
+      }
+    } catch {}
+    router.push('/');
+  }
+
+  async function handleGoogle() {
+    setError(null);
+    if (!agree) {
+      setError('Please agree to the Terms & Privacy to continue');
+      return;
+    }
+    setLoading('google');
+    try {
+      const { isNewUser } = await signInWithGoogleDetailed();
+      afterAuth(isNewUser);
+    } catch (e: any) {
+      setError(e?.message || 'Google sign-up failed');
+    } finally {
+      setLoading(null);
+    }
+  }
+
+  async function handleApple() {
+    setError(null);
+    if (!agree) {
+      setError('Please agree to the Terms & Privacy to continue');
+      return;
+    }
+    setLoading('apple');
+    try {
+      const { isNewUser } = await signInWithAppleDetailed();
+      afterAuth(isNewUser);
+    } catch (e: any) {
+      setError(e?.message || 'Apple sign-up failed');
+    } finally {
+      setLoading(null);
+    }
+  }
+
+  async function handleSendOtp() {
+    setError(null);
+    if (!agree) {
+      setError('Please agree to the Terms & Privacy to continue');
+      return;
+    }
+    if (!/^\+\d{6,15}$/.test(fullPhone)) {
+      setError('Enter a valid phone number');
+      return;
+    }
+    setLoading('otp-send');
+    try {
+      await sendOtp(fullPhone);
+      setOtpSent(true);
+    } catch (e: any) {
+      setError(e?.message || 'Failed to send OTP');
+    } finally {
+      setLoading(null);
+    }
+  }
+
+  async function handleVerifyOtp() {
+    setError(null);
+    if (!/^\d{6}$/.test(code)) {
+      setError(`Enter the ${OTP_LEN}-digit OTP`);
+      return;
+    }
+    setLoading('otp-verify');
+    try {
+      const { isNewUser } = await verifyOtpDetailed(code);
+      afterAuth(isNewUser);
+    } catch (e: any) {
+      setError(e?.message || 'Invalid OTP');
+    } finally {
+      setLoading(null);
+    }
+  }
+
   return (
     <div className="w-full">
       {/* Brand */}
@@ -249,17 +358,25 @@ function SignupPanel() {
 
       {/* SSO */}
       <div className="mt-5 space-y-3">
-        <button className="w-full h-11 rounded-xl border border-gray-200 hover:border-gray-300 bg-white text-gray-800 font-medium flex items-center justify-center gap-2 transition">
+        <button
+          onClick={handleGoogle}
+          disabled={loading !== null}
+          className="w-full h-11 rounded-xl border border-gray-200 hover:border-gray-300 bg-white text-gray-800 font-medium flex items-center justify-center gap-2 transition disabled:opacity-60"
+        >
           <span className="relative w-5 h-5">
             <Image src="/images/google.png" alt="Google" fill className="object-contain" />
           </span>
-          Continue with Google
+          {loading === 'google' ? 'Connecting…' : 'Continue with Google'}
         </button>
-        <button className="w-full h-11 rounded-xl border border-gray-200 hover:border-gray-300 bg-white text-gray-800 font-medium flex items-center justify-center gap-2 transition">
+        <button
+          onClick={handleApple}
+          disabled={loading !== null}
+          className="w-full h-11 rounded-xl border border-gray-200 hover:border-gray-300 bg-white text-gray-800 font-medium flex items-center justify-center gap-2 transition disabled:opacity-60"
+        >
           <span className="relative w-5 h-5">
             <Image src="/images/apple.png" alt="Apple" fill className="object-contain" />
           </span>
-          Continue with Apple
+          {loading === 'apple' ? 'Connecting…' : 'Continue with Apple'}
         </button>
       </div>
 
@@ -273,22 +390,34 @@ function SignupPanel() {
       {/* Phone */}
       <label className="text-xs font-medium text-gray-700">Phone number</label>
       <div className="mt-1.5 flex gap-2">
-        <select className="h-11 rounded-xl border border-gray-200 bg-white px-3 text-gray-800 text-sm">
-          <option>+91</option>
-          <option>+1</option>
-          <option>+44</option>
+        <select
+          className="h-11 rounded-xl border border-gray-200 bg-white px-3 text-gray-800 text-sm"
+          value={dial}
+          onChange={(e) => setDial(e.target.value)}
+        >
+          <option value="+91">+91</option>
+          <option value="+1">+1</option>
+          <option value="+44">+44</option>
         </select>
         <input
           type="tel"
           inputMode="numeric"
           placeholder="98765 43210"
           className="h-11 flex-1 rounded-xl border border-amber-300/60 bg-white px-3 text-gray-800 placeholder:text-gray-400 outline-none focus:ring-2 focus:ring-amber-300/60"
+          value={phone}
+          onChange={(e) => setPhone(e.target.value)}
         />
       </div>
 
       {/* Terms */}
       <label className="mt-3 flex items-center gap-2 text-xs text-gray-600">
-        <input type="checkbox" className="h-4 w-4 accent-amber-500" /> I agree to the{' '}
+        <input
+          type="checkbox"
+          className="h-4 w-4 accent-amber-500"
+          checked={agree}
+          onChange={(e) => setAgree(e.target.checked)}
+        />
+        I agree to the{' '}
         <a className="underline hover:text-gray-900" href="#">
           Terms
         </a>{' '}
@@ -299,12 +428,40 @@ function SignupPanel() {
         .
       </label>
 
-      <button
-        className="mt-4 w-full h-11 rounded-xl font-semibold text-white shadow-lg transition-transform active:scale-[0.99]"
-        style={{ background: BRAND_GRADIENT }}
-      >
-        Create account with phone
-      </button>
+      {!otpSent ? (
+        <button
+          onClick={handleSendOtp}
+          disabled={loading !== null}
+          className="mt-4 w-full h-11 rounded-xl font-semibold text-white shadow-lg transition-transform active:scale-[0.99] disabled:opacity-60"
+          style={{ background: BRAND_GRADIENT }}
+        >
+          {loading === 'otp-send' ? 'Sending OTP…' : 'Create account with phone'}
+        </button>
+      ) : (
+        <>
+          <label className="mt-4 block text-xs font-medium text-gray-700">Enter OTP</label>
+          <input
+            type="tel"
+            inputMode="numeric"
+            placeholder={`${OTP_LEN}-digit code`}
+            maxLength={OTP_LEN}
+            className="mt-1.5 h-11 w-full rounded-xl border border-amber-300/60 bg-white px-3 text-gray-800 placeholder:text-gray-400 outline-none focus:ring-2 focus:ring-amber-300/60"
+            value={code}
+            onChange={(e) => setCode(e.target.value.replace(/\D/g, '').slice(0, OTP_LEN))}
+          />
+          <button
+            onClick={handleVerifyOtp}
+            disabled={loading !== null}
+            className="mt-3 w-full h-11 rounded-xl font-semibold text-white shadow-lg transition-transform active:scale-[0.99] disabled:opacity-60"
+            style={{ background: BRAND_GRADIENT }}
+          >
+            {loading === 'otp-verify' ? 'Verifying…' : 'Verify & continue'}
+          </button>
+        </>
+      )}
+
+      {/* Error */}
+      {error && <p className="mt-3 text-sm text-red-600">{error}</p>}
 
       {/* Footer */}
       <div className="mt-5 flex items-center justify-between text-sm text-gray-600">
@@ -318,6 +475,9 @@ function SignupPanel() {
           Back to home
         </Link>
       </div>
+
+      {/* Invisible reCAPTCHA anchor */}
+      <div id="recaptcha-container" className="hidden" />
     </div>
   );
 }
