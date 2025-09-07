@@ -1,238 +1,142 @@
 'use client';
 
-import React, { useEffect, useMemo, useState } from 'react';
+import { Fragment, useMemo, useState } from 'react';
+import { Dialog, Transition } from '@headlessui/react';
+import { useAuthUser } from '@/providers/auth-user-provider';
+import { saveOnboarding } from '@/lib/firebase-db';
 
-type StepId = 'category' | 'name' | 'location' | 'type' | 'language' | 'goal';
-
-const STEPS: StepId[] = ['category', 'name', 'location', 'type', 'language', 'goal'];
+const QUESTIONS = [
+  { key: 'storeName', label: 'Store name', type: 'text', placeholder: 'e.g., Shree Kirana' },
+  { key: 'businessType', label: 'Business type', type: 'select', options: ['Grocery', 'Pharmacy', 'Restaurant', 'Electronics', 'Clothing', 'Other'] },
+  { key: 'categories', label: 'Categories (comma separated)', type: 'text', placeholder: 'fruits, dairy, snacks' },
+  { key: 'location', label: 'City / Area', type: 'text', placeholder: 'e.g., Pune' },
+  { key: 'teamSize', label: 'Team size', type: 'number', placeholder: 'e.g., 3' },
+  { key: 'goal', label: 'Main goal', type: 'select', options: ['Online catalogue', 'Billing & invoicing', 'Inventory tracking', 'Marketing / WhatsApp catalog'] },
+] as const;
 
 export default function OnboardingModal() {
-  const [open, setOpen] = useState(false);
+  const { user, needsOnboarding, refreshProfile } = useAuthUser();
   const [step, setStep] = useState(0);
+  const [saving, setSaving] = useState(false);
+  const [answers, setAnswers] = useState<Record<string, any>>({});
 
-  // answers
-  const [category, setCategory] = useState<string>('');
-  const [bizName, setBizName] = useState<string>('');
-  const [city, setCity] = useState<string>('');
-  const [pincode, setPincode] = useState<string>('');
-  const [kind, setKind] = useState<string>('Products');
-  const [language, setLanguage] = useState<string>('English');
-  const [goal, setGoal] = useState<string>('Launch quickly');
+  const open = !!(user && needsOnboarding);
+  const q = QUESTIONS[step];
+  const progress = useMemo(() => ((step + 1) / QUESTIONS.length) * 100, [step]);
 
-  // open on first load if pending flag is set
-  useEffect(() => {
+  const next = async () => {
+    if (step < QUESTIONS.length - 1) return setStep(step + 1);
+    if (!user) return;
+    setSaving(true);
     try {
-      if (localStorage.getItem('vyap:onboarding:pending') === '1') {
-        setOpen(true);
-      }
-    } catch {}
-  }, []);
-
-  const progressPct = useMemo(() => Math.round(((step + 1) / STEPS.length) * 100), [step]);
-
-  function closeAndClear() {
-    try {
-      localStorage.removeItem('vyap:onboarding:pending');
-    } catch {}
-    setOpen(false);
-  }
-
-  function handleNext() {
-    if (step < STEPS.length - 1) setStep(step + 1);
-    else handleFinish();
-  }
-
-  function handleBack() {
-    if (step > 0) setStep(step - 1);
-  }
-
-  function handleFinish() {
-    // save to localStorage (wire to API later)
-    const payload = {
-      category,
-      bizName,
-      city,
-      pincode,
-      kind,
-      language,
-      goal,
-      savedAt: new Date().toISOString(),
-    };
-    try {
-      localStorage.setItem('vyap:onboarding:data', JSON.stringify(payload));
-      localStorage.setItem('vyap:has_onboarded', '1');
-      localStorage.removeItem('vyap:onboarding:pending');
-    } catch {}
-    setOpen(false);
-  }
-
-  if (!open) return null;
+      await saveOnboarding(user.uid, {
+        storeName: answers.storeName || '',
+        businessType: answers.businessType || '',
+        categories: (answers.categories || '')
+          .toString()
+          .split(',')
+          .map((s: string) => s.trim())
+          .filter(Boolean),
+        location: answers.location || '',
+        teamSize: Number(answers.teamSize || 0),
+        goal: answers.goal || '',
+      });
+      await refreshProfile();
+    } finally {
+      setSaving(false);
+    }
+  };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-      {/* backdrop */}
-      <div className="absolute inset-0 bg-black/40" onClick={closeAndClear} />
-      {/* modal */}
-      <div className="relative w-full max-w-lg rounded-2xl bg-white shadow-2xl border border-amber-200/50 overflow-hidden">
-        {/* progress */}
-        <div className="h-1 bg-amber-100">
-          <div
-            className="h-1 bg-gradient-to-r from-orange-500 via-yellow-500 to-emerald-500 transition-all"
-            style={{ width: `${progressPct}%` }}
-          />
-        </div>
+    <Transition appear show={open} as={Fragment}>
+      <Dialog as="div" className="relative z-[60]" onClose={() => {}}>
+        <Transition.Child
+          as={Fragment}
+          enter="ease-out duration-200" enterFrom="opacity-0" enterTo="opacity-100"
+          leave="ease-in duration-150" leaveFrom="opacity-100" leaveTo="opacity-0"
+        >
+          <div className="fixed inset-0 bg-black/30" />
+        </Transition.Child>
 
-        <div className="p-6">
-          <div className="flex items-center justify-between mb-2">
-            <h3 className="text-lg font-semibold">Quick setup</h3>
-            <button
-              onClick={closeAndClear}
-              className="text-gray-500 hover:text-gray-800 rounded-md px-2 py-1"
-              aria-label="Close"
+        <div className="fixed inset-0 overflow-y-auto p-4 sm:p-8">
+          <div className="mx-auto max-w-xl">
+            <Transition.Child
+              as={Fragment}
+              enter="ease-out duration-200"
+              enterFrom="opacity-0 translate-y-3"
+              enterTo="opacity-100 translate-y-0"
+              leave="ease-in duration-150"
+              leaveFrom="opacity-100 translate-y-0"
+              leaveTo="opacity-0 translate-y-3"
             >
-              ✕
-            </button>
-          </div>
-          <p className="text-sm text-gray-600 mb-4">Answer a few questions to personalize VyapGO.</p>
+              <Dialog.Panel className="rounded-2xl bg-white shadow-xl border border-amber-200/60">
+                <div className="p-6">
+                  <Dialog.Title className="text-lg font-semibold">Let’s set up your shop</Dialog.Title>
+                  <p className="text-sm text-gray-600 mt-1">Answer a few quick questions to personalize your dashboard.</p>
 
-          {/* step content */}
-          {STEPS[step] === 'category' && (
-            <div>
-              <label className="text-sm font-medium text-gray-800">What kind of shop do you run?</label>
-              <div className="mt-3 grid grid-cols-2 gap-2">
-                {['Grocery', 'Pharmacy', 'Restaurant', 'Electronics', 'Clothing', 'Other'].map((c) => (
-                  <button
-                    key={c}
-                    onClick={() => setCategory(c)}
-                    className={`px-3 py-2 rounded-lg border text-sm ${
-                      category === c ? 'border-amber-400 bg-amber-50' : 'border-gray-200 hover:bg-gray-50'
-                    }`}
-                  >
-                    {c}
-                  </button>
-                ))}
-              </div>
-            </div>
-          )}
+                  <div className="mt-4 h-2 w-full rounded-full bg-gray-100 overflow-hidden">
+                    <div
+                      className="h-full bg-gradient-to-r from-orange-500 to-emerald-500"
+                      style={{ width: `${progress}%` }}
+                    />
+                  </div>
 
-          {STEPS[step] === 'name' && (
-            <div className="space-y-3">
-              <label className="text-sm font-medium text-gray-800">Business name</label>
-              <input
-                value={bizName}
-                onChange={(e) => setBizName(e.target.value)}
-                placeholder="eg. Shree Ram General Store"
-                className="w-full h-11 rounded-xl border border-gray-200 px-3 outline-none focus:ring-2 focus:ring-amber-300/60"
-              />
-            </div>
-          )}
+                  <div className="mt-6">
+                    <label className="text-sm font-medium text-gray-800">{q.label}</label>
+                    {q.type === 'text' && (
+                      <input
+                        className="mt-2 w-full h-11 rounded-xl border border-gray-200 px-3"
+                        placeholder={q.placeholder}
+                        value={answers[q.key] || ''}
+                        onChange={(e) => setAnswers({ ...answers, [q.key]: e.target.value })}
+                      />
+                    )}
+                    {q.type === 'number' && (
+                      <input
+                        type="number"
+                        className="mt-2 w-full h-11 rounded-xl border border-gray-200 px-3"
+                        placeholder={q.placeholder}
+                        value={answers[q.key] || ''}
+                        onChange={(e) => setAnswers({ ...answers, [q.key]: e.target.value })}
+                      />
+                    )}
+                    {q.type === 'select' && (
+                      <select
+                        className="mt-2 w-full h-11 rounded-xl border border-gray-200 px-3"
+                        value={answers[q.key] || ''}
+                        onChange={(e) => setAnswers({ ...answers, [q.key]: e.target.value })}
+                      >
+                        <option value="">Select…</option>
+                        {q.options!.map((o) => (
+                          <option key={o} value={o}>{o}</option>
+                        ))}
+                      </select>
+                    )}
+                  </div>
 
-          {STEPS[step] === 'location' && (
-            <div className="space-y-3">
-              <label className="text-sm font-medium text-gray-800">Where is your shop?</label>
-              <div className="grid grid-cols-2 gap-2">
-                <input
-                  value={city}
-                  onChange={(e) => setCity(e.target.value)}
-                  placeholder="City"
-                  className="h-11 rounded-xl border border-gray-200 px-3 outline-none focus:ring-2 focus:ring-amber-300/60"
-                />
-                <input
-                  value={pincode}
-                  onChange={(e) => setPincode(e.target.value)}
-                  placeholder="Pincode"
-                  inputMode="numeric"
-                  className="h-11 rounded-xl border border-gray-200 px-3 outline-none focus:ring-2 focus:ring-amber-300/60"
-                />
-              </div>
-            </div>
-          )}
-
-          {STEPS[step] === 'type' && (
-            <div>
-              <label className="text-sm font-medium text-gray-800">Do you sell products or services?</label>
-              <div className="mt-3 flex gap-2">
-                {['Products', 'Services', 'Both'].map((k) => (
-                  <button
-                    key={k}
-                    onClick={() => setKind(k)}
-                    className={`px-3 py-2 rounded-lg border text-sm ${
-                      kind === k ? 'border-amber-400 bg-amber-50' : 'border-gray-200 hover:bg-gray-50'
-                    }`}
-                  >
-                    {k}
-                  </button>
-                ))}
-              </div>
-            </div>
-          )}
-
-          {STEPS[step] === 'language' && (
-            <div>
-              <label className="text-sm font-medium text-gray-800">Preferred language</label>
-              <div className="mt-3 flex gap-2 flex-wrap">
-                {['English', 'हिंदी', 'বাংলা', 'मराठी', 'ગુજરાતી', 'தமிழ்'].map((l) => (
-                  <button
-                    key={l}
-                    onClick={() => setLanguage(l)}
-                    className={`px-3 py-2 rounded-lg border text-sm ${
-                      language === l ? 'border-amber-400 bg-amber-50' : 'border-gray-200 hover:bg-gray-50'
-                    }`}
-                  >
-                    {l}
-                  </button>
-                ))}
-              </div>
-            </div>
-          )}
-
-          {STEPS[step] === 'goal' && (
-            <div>
-              <label className="text-sm font-medium text-gray-800">What’s your main goal?</label>
-              <div className="mt-3 grid grid-cols-2 gap-2">
-                {['Launch quickly', 'Track inventory', 'Grow sales', 'Accept payments', 'Staff mgmt', 'Analytics'].map(
-                  (g) => (
+                  <div className="mt-6 flex justify-between">
                     <button
-                      key={g}
-                      onClick={() => setGoal(g)}
-                      className={`px-3 py-2 rounded-lg border text-sm ${
-                        goal === g ? 'border-amber-400 bg-amber-50' : 'border-gray-200 hover:bg-gray-50'
-                      }`}
+                      disabled={step === 0 || saving}
+                      onClick={() => setStep((s) => Math.max(0, s - 1))}
+                      className="px-4 h-10 rounded-lg border border-gray-200 text-gray-700 disabled:opacity-50"
                     >
-                      {g}
+                      Back
                     </button>
-                  ),
-                )}
-              </div>
-            </div>
-          )}
-
-          {/* Footer actions */}
-          <div className="mt-6 flex items-center justify-between">
-            <button
-              onClick={handleBack}
-              disabled={step === 0}
-              className={`px-4 py-2 rounded-lg text-sm border ${
-                step === 0 ? 'border-gray-200 text-gray-400 cursor-not-allowed' : 'border-gray-300 hover:bg-gray-50'
-              }`}
-            >
-              Back
-            </button>
-            <div className="flex items-center gap-3">
-              <button onClick={closeAndClear} className="text-sm text-gray-500 hover:text-gray-800">
-                Skip for now
-              </button>
-              <button
-                onClick={handleNext}
-                className="px-5 py-2 rounded-lg text-sm font-semibold text-white"
-                style={{ background: 'linear-gradient(90deg, #f97316, #f59e0b, #10b981)' }}
-              >
-                {step === STEPS.length - 1 ? 'Finish' : 'Next'}
-              </button>
-            </div>
+                    <button
+                      disabled={saving}
+                      onClick={next}
+                      className="px-5 h-10 rounded-lg text-white font-semibold"
+                      style={{ background: 'linear-gradient(90deg,#f97316,#f59e0b,#10b981)' }}
+                    >
+                      {step === QUESTIONS.length - 1 ? (saving ? 'Saving…' : 'Finish') : 'Next'}
+                    </button>
+                  </div>
+                </div>
+              </Dialog.Panel>
+            </Transition.Child>
           </div>
         </div>
-      </div>
-    </div>
+      </Dialog>
+    </Transition>
   );
 }

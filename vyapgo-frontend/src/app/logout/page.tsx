@@ -2,24 +2,31 @@
 
 import { useEffect } from 'react';
 import { useRouter } from 'next/navigation';
-import { signOutUser } from '@/lib/auth-client';
+import { signOut } from 'firebase/auth';
+import { auth } from '@/lib/auth-client';
 
 export default function LogoutPage() {
   const router = useRouter();
 
   useEffect(() => {
-    (async () => {
+    const doLogout = async () => {
       try {
-        await signOutUser();
+        // clear any onboarding one-shot flag
+        try { localStorage.removeItem('vyap:onboarding:pending'); } catch {}
+
+        await signOut(auth);
+      } catch {
+        // ignore error—we'll still try to move on
       } finally {
-        router.replace('/');
+        router.replace('/'); // go home after sign out
       }
-    })();
+    };
+    doLogout();
   }, [router]);
 
   return (
-    <main className="min-h-screen grid place-items-center">
-      <p className="text-gray-600">Signing you out…</p>
-    </main>
+    <div className="min-h-[60vh] flex items-center justify-center text-gray-700">
+      Signing you out…
+    </div>
   );
 }

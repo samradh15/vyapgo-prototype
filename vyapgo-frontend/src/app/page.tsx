@@ -5,6 +5,8 @@ import AppCreationPreview from '@/components/AppCreation/AppCreationPreview';
 import PricingSection from '@/components/Pricing/PricingSection';
 import Footer from '@/components/Footer/Footer';
 import OnboardingModal from '@/components/onboarding/OnboardingModal';
+import OnboardingGate from '@/components/onboarding/OnboardingGate';
+
 
 export default function Home() {
   return (
@@ -15,6 +17,7 @@ export default function Home() {
       <PricingSection />
       <Footer />
       <OnboardingModal />
+      <OnboardingGate />
     </main>
   );
 }

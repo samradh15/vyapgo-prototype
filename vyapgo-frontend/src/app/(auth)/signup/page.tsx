@@ -7,11 +7,12 @@ import { useRouter } from 'next/navigation';
 import {
   ensureRecaptcha,
   sendOtp,
-  // old simple helpers still exist, but we’ll use the detailed ones below:
+  // detailed sign-in helpers should return { user, isNewUser? }
   signInWithGoogleDetailed,
   signInWithAppleDetailed,
   verifyOtpDetailed,
 } from '@/lib/auth-client';
+import { ensureUserDoc, fetchUserDoc } from '@/lib/firebase-db';
 
 /** ---------- Theme tokens ---------- */
 const BG = '#F6F0E6';
@@ -234,7 +235,7 @@ function AutoPreview() {
   );
 }
 
-/** ---------- Right-side signup panel (wired, new-user only popup) ---------- */
+/** ---------- Right-side signup panel (routes via Firestore user doc) ---------- */
 function SignupPanel() {
   const router = useRouter();
   const [dial, setDial] = useState('+91');
@@ -252,26 +253,24 @@ function SignupPanel() {
 
   const fullPhone = `${dial}${phone.replace(/\D/g, '')}`;
 
-  // Redirect helper: mark onboarding only if new
-  function afterAuth(isNewUser: boolean) {
-    try {
-      if (isNewUser) {
-        localStorage.setItem('vyap:onboarding:pending', '1');
-      }
-    } catch {}
-    router.push('/');
+  async function postAuthRoute(user: any) {
+    if (!user?.uid) return router.replace('/');
+    await ensureUserDoc(user.uid);
+    const doc = await fetchUserDoc(user.uid);
+    if (doc?.onboardingCompleted) {
+      router.replace('/account');
+    } else {
+      router.replace('/onboarding');
+    }
   }
 
   async function handleGoogle() {
     setError(null);
-    if (!agree) {
-      setError('Please agree to the Terms & Privacy to continue');
-      return;
-    }
+    if (!agree) return setError('Please agree to the Terms & Privacy to continue');
     setLoading('google');
     try {
-      const { isNewUser } = await signInWithGoogleDetailed();
-      afterAuth(isNewUser);
+      const { user } = await signInWithGoogleDetailed();
+      await postAuthRoute(user);
     } catch (e: any) {
       setError(e?.message || 'Google sign-up failed');
     } finally {
@@ -281,14 +280,11 @@ function SignupPanel() {
 
   async function handleApple() {
     setError(null);
-    if (!agree) {
-      setError('Please agree to the Terms & Privacy to continue');
-      return;
-    }
+    if (!agree) return setError('Please agree to the Terms & Privacy to continue');
     setLoading('apple');
     try {
-      const { isNewUser } = await signInWithAppleDetailed();
-      afterAuth(isNewUser);
+      const { user } = await signInWithAppleDetailed();
+      await postAuthRoute(user);
     } catch (e: any) {
       setError(e?.message || 'Apple sign-up failed');
     } finally {
@@ -298,14 +294,8 @@ function SignupPanel() {
 
   async function handleSendOtp() {
     setError(null);
-    if (!agree) {
-      setError('Please agree to the Terms & Privacy to continue');
-      return;
-    }
-    if (!/^\+\d{6,15}$/.test(fullPhone)) {
-      setError('Enter a valid phone number');
-      return;
-    }
+    if (!agree) return setError('Please agree to the Terms & Privacy to continue');
+    if (!/^\+\d{6,15}$/.test(fullPhone)) return setError('Enter a valid phone number');
     setLoading('otp-send');
     try {
       await sendOtp(fullPhone);
@@ -319,14 +309,11 @@ function SignupPanel() {
 
   async function handleVerifyOtp() {
     setError(null);
-    if (!/^\d{6}$/.test(code)) {
-      setError(`Enter the ${OTP_LEN}-digit OTP`);
-      return;
-    }
+    if (!/^\d{6}$/.test(code)) return setError(`Enter the ${OTP_LEN}-digit OTP`);
     setLoading('otp-verify');
     try {
-      const { isNewUser } = await verifyOtpDetailed(code);
-      afterAuth(isNewUser);
+      const { user } = await verifyOtpDetailed(code);
+      await postAuthRoute(user);
     } catch (e: any) {
       setError(e?.message || 'Invalid OTP');
     } finally {

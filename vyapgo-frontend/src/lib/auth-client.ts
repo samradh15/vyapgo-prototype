@@ -1,87 +1,40 @@
 'use client';
 
-import { getApps, initializeApp, getApp, type FirebaseApp } from 'firebase/app';
+import { getApps, initializeApp } from 'firebase/app';
 import {
   getAuth,
   onAuthStateChanged,
   signOut,
-  RecaptchaVerifier,
-  signInWithPhoneNumber,
-  GoogleAuthProvider,
-  OAuthProvider,
-  signInWithPopup,
-  ConfirmationResult,
-  type User,
   setPersistence,
   browserLocalPersistence,
   browserSessionPersistence,
   inMemoryPersistence,
-  connectAuthEmulator,
+  RecaptchaVerifier,
+  signInWithPhoneNumber,
+  ConfirmationResult,
+  GoogleAuthProvider,
+  OAuthProvider,
+  signInWithPopup,
+  getAdditionalUserInfo,
+  type User,
 } from 'firebase/auth';
-import { getAdditionalUserInfo } from 'firebase/auth';
 
-/* ---------------------------------------
-   Firebase init (idempotent & client-safe)
----------------------------------------- */
+/** ---- Init (safe if already initialized) ---- */
 const firebaseConfig = {
   apiKey: process.env.NEXT_PUBLIC_FIREBASE_API_KEY!,
   authDomain: process.env.NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN!,
   projectId: process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID!,
   appId: process.env.NEXT_PUBLIC_FIREBASE_APP_ID!,
-  // accept either SENDER_ID or MESSAGING_SENDER_ID
-  messagingSenderId:
-    process.env.NEXT_PUBLIC_FIREBASE_SENDER_ID ||
-    process.env.NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID ||
-    '',
+  messagingSenderId: process.env.NEXT_PUBLIC_FIREBASE_SENDER_ID!,
 };
 
-function initApp(): FirebaseApp {
-  return getApps().length ? getApp() : initializeApp(firebaseConfig);
-}
+if (!getApps().length) initializeApp(firebaseConfig);
+export const auth = getAuth();
 
-const app = initApp();
-export const auth = getAuth(app);
+/** ---- Types ---- */
+export type SignInResult = { user: User; isNewUser: boolean };
 
-// Optional: use emulator locally if you want (set env NEXT_PUBLIC_USE_AUTH_EMULATOR=1)
-if (
-  typeof window !== 'undefined' &&
-  process.env.NEXT_PUBLIC_USE_AUTH_EMULATOR === '1'
-) {
-  try {
-    connectAuthEmulator(auth, 'http://localhost:9099', { disableWarnings: true });
-  } catch {
-    /* ignore duplicate emulator connections during HMR */
-  }
-}
-
-// Device language for SMS/consent prompts
-try {
-  auth.useDeviceLanguage();
-} catch { /* noop */ }
-
-/* ---------------------------------------
-   Persistence (configurable in dev)
----------------------------------------- */
-const devPersistence = process.env.NEXT_PUBLIC_AUTH_PERSISTENCE || 'session'; // 'session' | 'none' | 'local'
-const pickPersistence = (mode: string) =>
-  mode === 'none'
-    ? inMemoryPersistence
-    : mode === 'session'
-    ? browserSessionPersistence
-    : browserLocalPersistence;
-
-setPersistence(
-  auth,
-  process.env.NODE_ENV === 'development'
-    ? pickPersistence(devPersistence)
-    : browserLocalPersistence
-).catch(() => {
-  // ignore if already set during hot reload
-});
-
-/* ---------------------------------------
-   Auth state helpers
----------------------------------------- */
+/** ---- Auth state helpers ---- */
 export function onAuthStateChange(cb: (user: User | null) => void) {
   return onAuthStateChanged(auth, cb);
 }
@@ -92,36 +45,17 @@ export async function signOutUser() {
   await signOut(auth);
 }
 
-/* ---------------------------------------
-   reCAPTCHA + Phone OTP helpers
----------------------------------------- */
+/** ---- Phone OTP (invisible reCAPTCHA) ---- */
 let recaptchaVerifier: RecaptchaVerifier | null = null;
 let confirmationResult: ConfirmationResult | null = null;
 
-function ensureContainer(containerId: string) {
-  if (typeof window === 'undefined' || typeof document === 'undefined') return;
-  if (!document.getElementById(containerId)) {
-    const el = document.createElement('div');
-    el.id = containerId;
-    // keep it off-screen; invisible widget uses it just for anchor
-    el.style.position = 'fixed';
-    el.style.left = '-9999px';
-    el.style.top = '0';
-    document.body.appendChild(el);
-  }
-}
-
 export function ensureRecaptcha(containerId = 'recaptcha-container') {
   if (recaptchaVerifier) return recaptchaVerifier;
-  ensureContainer(containerId);
-  recaptchaVerifier = new RecaptchaVerifier(auth, containerId, {
-    size: 'invisible',
-    'expired-callback': () => {
-      // re-create on expiry
-      recaptchaVerifier?.clear();
-      recaptchaVerifier = null;
-    },
-  });
+  recaptchaVerifier = new RecaptchaVerifier(auth, containerId, { size: 'invisible' });
+  try {
+    // in some environments this is needed to instantiate the widget
+    (recaptchaVerifier as any).render?.();
+  } catch {}
   return recaptchaVerifier;
 }
 
@@ -131,59 +65,49 @@ export async function sendOtp(e164Phone: string) {
   return true;
 }
 
-export async function verifyOtp(code: string) {
+export async function verifyOtpDetailed(code: string): Promise<SignInResult> {
   if (!confirmationResult) throw new Error('OTP was not requested');
   const cred = await confirmationResult.confirm(code);
-  // cleanup verifier after successful verification
-  try {
-    recaptchaVerifier?.clear();
-  } catch { /* noop */ }
-  recaptchaVerifier = null;
-  confirmationResult = null;
-  return cred.user;
+  const info = getAdditionalUserInfo(cred);
+  const isNewUser =
+    !!(info?.isNewUser ??
+      (cred.user.metadata.creationTime === cred.user.metadata.lastSignInTime));
+  return { user: cred.user, isNewUser };
 }
 
-/* ---------------------------------------
-   Google & Apple SSO
----------------------------------------- */
-export async function signInWithGoogle() {
+/** ---- Google / Apple ---- */
+export async function signInWithGoogleDetailed(): Promise<SignInResult> {
   const provider = new GoogleAuthProvider();
-  provider.setCustomParameters({ prompt: 'select_account' });
-  const res = await signInWithPopup(auth, provider);
-  return res.user;
+  const cred = await signInWithPopup(auth, provider);
+  const info = getAdditionalUserInfo(cred);
+  const isNewUser =
+    !!(info?.isNewUser ??
+      (cred.user.metadata.creationTime === cred.user.metadata.lastSignInTime));
+  return { user: cred.user, isNewUser };
 }
 
-export async function signInWithApple() {
+export async function signInWithAppleDetailed(): Promise<SignInResult> {
   const provider = new OAuthProvider('apple.com');
-  provider.addScope('email');
-  provider.addScope('name');
-  const res = await signInWithPopup(auth, provider);
-  return res.user;
+  const cred = await signInWithPopup(auth, provider);
+  const info = getAdditionalUserInfo(cred);
+  const isNewUser =
+    !!(info?.isNewUser ??
+      (cred.user.metadata.creationTime === cred.user.metadata.lastSignInTime));
+  return { user: cred.user, isNewUser };
 }
 
-export async function signInWithGoogleDetailed() {
-    const provider = new GoogleAuthProvider();
-    const cred = await signInWithPopup(auth, provider);
-    const info = getAdditionalUserInfo(cred);
-    return { user: cred.user, isNewUser: !!info?.isNewUser };
-  }
-  
-  export async function signInWithAppleDetailed() {
-    const provider = new OAuthProvider('apple.com');
-    const cred = await signInWithPopup(auth, provider);
-    const info = getAdditionalUserInfo(cred);
-    return { user: cred.user, isNewUser: !!info?.isNewUser };
-  }
-  
-  // Uses your existing confirmationResult from sendOtp()
-  export async function verifyOtpDetailed(code: string) {
-    if (!confirmationResult) throw new Error('OTP was not requested');
-    const cred = await confirmationResult.confirm(code);
-    const info = getAdditionalUserInfo(cred);
-    return { user: cred.user, isNewUser: !!info?.isNewUser };
-  }
+/** ---- Persistence (lighter in dev) ---- */
+const devPersistence = process.env.NEXT_PUBLIC_AUTH_PERSISTENCE || 'session'; // 'session' | 'none' | 'local'
+const choose = (mode: string) =>
+  mode === 'none' ? inMemoryPersistence :
+  mode === 'session' ? browserSessionPersistence :
+  browserLocalPersistence;
 
-/* ---------------------------------------
-   Useful re-exports
----------------------------------------- */
-export type { User };
+setPersistence(
+  auth,
+  process.env.NODE_ENV === 'development'
+    ? choose(devPersistence)
+    : browserLocalPersistence
+).catch(() => {
+  // ignore hot-reload race
+});
