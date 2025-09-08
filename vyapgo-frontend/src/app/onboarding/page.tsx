@@ -83,10 +83,10 @@ export default function OnboardingPage() {
     try {
       // Map to profile schema (and keep extra fields)
       await saveOnboarding(uid, {
-        storeName: (answers.shopName || '').trim(),
+        shopName: (answers.shopName || '').trim(),
         businessType: answers.businessType || '',
-        location: (answers.locationCity || '').trim(),
-        goal: answers.primaryGoal || '',
+        locationCity: (answers.locationCity || '').trim(),
+        primaryGoal: answers.primaryGoal || '',
         // Keep these as additional properties (optional in your schema)
         sellingChannels: answers.sellingChannels ?? [],
         inventorySize: answers.inventorySize || '',

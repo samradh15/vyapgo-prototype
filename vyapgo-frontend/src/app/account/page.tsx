@@ -7,9 +7,10 @@ import { onAuthStateChanged } from 'firebase/auth';
 import { auth } from '@/lib/auth-client';
 import {
   ensureUserDoc,
-  getAccount,
-  updateAccount,
+  fetchUserDoc,
+  updateUser,
   type OnboardingAnswers,
+  type UserProfile,
 } from '@/lib/firebase-db';
 
 const BRAND = 'linear-gradient(90deg, #f97316, #f59e0b, #10b981)';
@@ -22,55 +23,56 @@ type FieldKey =
   | 'inventorySize'
   | 'primaryGoal';
 
-const BUSINESS_TYPES = [
-  'Kirana / Grocery',
-  'Restaurant',
-  'Salon',
-  'Pharmacy',
-  'Boutique',
-  'Other',
-];
-
-const INVENTORY_SIZES = ['<50', '50-200', '200+'];
-
-const GOALS = [
-  'Faster billing',
-  'Online orders',
-  'Analytics & insights',
-  'Inventory tracking',
-];
+const BUSINESS_TYPES = ['Kirana / Grocery','Restaurant','Salon','Pharmacy','Boutique','Other'];
+const INVENTORY_SIZES = ['<50','50-200','200+'];
+const GOALS = ['Faster billing','Online orders','Analytics & insights','Inventory tracking'];
 
 export default function AccountPage() {
   const router = useRouter();
   const [uid, setUid] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   // Profile + answers
   const [displayName, setDisplayName] = useState('');
   const [answers, setAnswers] = useState<OnboardingAnswers>({});
+  const [onboardingComplete, setOnboardingComplete] = useState<boolean>(false);
 
-  // editing which row?
+  // which row is in edit mode?
   const [editing, setEditing] = useState<FieldKey | 'displayName' | null>(null);
 
   useEffect(() => {
     const unsub = onAuthStateChanged(auth, async (user) => {
       if (!user) {
-        router.replace('/login');
+        router.replace('/login?next=' + encodeURIComponent('/account'));
         return;
       }
       setUid(user.uid);
+      setError(null);
+      setLoading(true);
+      try {
+        await ensureUserDoc(user.uid);
+        const data = await fetchUserDoc(user.uid);
 
-      await ensureUserDoc(user.uid, {
-        displayName: user.displayName ?? null,
-        providerIds: user.providerData?.map((p) => p.providerId) ?? [],
-      });
+        const dn = data?.displayName || data?.onboarding?.shopName || '';
+        setDisplayName(dn);
 
-      const data = await getAccount(user.uid);
-      setDisplayName(data.profile.displayName || data.onboarding.answers.shopName || '');
-      setAnswers(data.onboarding.answers || {});
-
-      setLoading(false);
+        const a: OnboardingAnswers = {
+          shopName: data?.onboarding?.shopName,
+          businessType: data?.onboarding?.businessType,
+          locationCity: data?.onboarding?.locationCity,
+          sellingChannels: data?.onboarding?.sellingChannels || [],
+          inventorySize: data?.onboarding?.inventorySize,
+          primaryGoal: data?.onboarding?.primaryGoal,
+        };
+        setAnswers(a);
+        setOnboardingComplete(!!data?.onboarding?.complete);
+      } catch (e: any) {
+        setError(e?.message || 'Failed to load your account.');
+      } finally {
+        setLoading(false);
+      }
     });
     return () => unsub();
   }, [router]);
@@ -87,12 +89,18 @@ export default function AccountPage() {
   async function saveDisplayName() {
     if (!uid) return;
     setSaving(true);
+    setError(null);
     try {
-      await updateAccount(uid, {
-        profile: { displayName },
-        onboardingAnswers: { shopName: displayName },
-      });
+      const nextOnboarding: UserProfile['onboarding'] = {
+        ...answers,
+        shopName: displayName,
+        ...(onboardingComplete ? { complete: true } : {}),
+      };
+      await updateUser(uid, { displayName, onboarding: nextOnboarding });
+      setAnswers((a) => ({ ...a, shopName: displayName }));
       setEditing(null);
+    } catch (e: any) {
+      setError(e?.message || 'Could not save.');
     } finally {
       setSaving(false);
     }
@@ -101,10 +109,18 @@ export default function AccountPage() {
   async function saveAnswer<K extends FieldKey>(key: K, value: OnboardingAnswers[K]) {
     if (!uid) return;
     setSaving(true);
+    setError(null);
     try {
-      await updateAccount(uid, { onboardingAnswers: { [key]: value } });
-      setAnswers((a) => ({ ...a, [key]: value }));
+      const nextAnswers: OnboardingAnswers = { ...answers, [key]: value };
+      const nextOnboarding: UserProfile['onboarding'] = {
+        ...nextAnswers,
+        ...(onboardingComplete ? { complete: true } : {}),
+      };
+      await updateUser(uid, { onboarding: nextOnboarding });
+      setAnswers(nextAnswers);
       setEditing(null);
+    } catch (e: any) {
+      setError(e?.message || 'Could not save.');
     } finally {
       setSaving(false);
     }
@@ -117,9 +133,22 @@ export default function AccountPage() {
       </div>
     );
   }
+  if (error) {
+    return (
+      <div className="min-h-[60vh] flex flex-col items-center justify-center gap-3">
+        <div className="text-red-600">{error}</div>
+        <button
+          className="px-4 h-10 rounded-lg bg-gray-900 text-white"
+          onClick={() => window.location.reload()}
+        >
+          Retry
+        </button>
+      </div>
+    );
+  }
 
   return (
-    <div className="max-w-6xl mx-auto px-6 py-10">
+    <div className="max-w-5xl mx-auto px-6 py-10">
       {/* Top header */}
       <div className="flex items-center gap-3">
         <span className="relative w-10 h-10">
@@ -133,154 +162,135 @@ export default function AccountPage() {
         </h1>
       </div>
 
-      <div className="mt-8 grid lg:grid-cols-[1fr_320px] gap-8">
-        {/* Left: editable details */}
-        <div className="rounded-2xl bg-white border border-amber-200/50 shadow-sm">
-          <div className="px-6 py-4 border-b border-amber-100/60 font-semibold text-gray-900">
-            Business details
-          </div>
-
-          <div className="divide-y divide-gray-100">
-            {/* Shop name */}
-            <Row
-              label="Shop name"
-              value={displayName || '—'}
-              editing={editing === 'displayName'}
-              onEdit={() => setEditing('displayName')}
-              onCancel={() => setEditing(null)}
-              action={
-                editing === 'displayName' ? (
-                  <div className="flex gap-2 items-center">
-                    <input
-                      className="h-10 rounded-lg border border-gray-300 px-3 text-sm"
-                      value={displayName}
-                      onChange={(e) => setDisplayName(e.target.value)}
-                      placeholder="Shree Ganesh Kirana"
-                    />
-                    <SaveBtn onClick={saveDisplayName} saving={saving} />
-                  </div>
-                ) : null
-              }
-            />
-
-            {/* Business type */}
-            <Row
-              label="Business type"
-              value={answers.businessType || '—'}
-              editing={editing === 'businessType'}
-              onEdit={() => setEditing('businessType')}
-              onCancel={() => setEditing(null)}
-              action={
-                editing === 'businessType' ? (
-                  <SelectInline
-                    options={BUSINESS_TYPES}
-                    value={answers.businessType || ''}
-                    onChange={(v) => saveAnswer('businessType', v)}
-                    saving={saving}
-                  />
-                ) : null
-              }
-            />
-
-            {/* Location */}
-            <Row
-              label="Location (City, State)"
-              value={answers.locationCity || '—'}
-              editing={editing === 'locationCity'}
-              onEdit={() => setEditing('locationCity')}
-              onCancel={() => setEditing(null)}
-              action={
-                editing === 'locationCity' ? (
-                  <TextInline
-                    initial={answers.locationCity || ''}
-                    onSave={(v) => saveAnswer('locationCity', v)}
-                    saving={saving}
-                    placeholder="Pune, Maharashtra"
-                  />
-                ) : null
-              }
-            />
-
-            {/* Selling channels */}
-            <Row
-              label="Selling channels"
-              value={(answers.sellingChannels?.length ? answers.sellingChannels : ['—']).join(', ')}
-              editing={editing === 'sellingChannels'}
-              onEdit={() => setEditing('sellingChannels')}
-              onCancel={() => setEditing(null)}
-              action={
-                editing === 'sellingChannels' ? (
-                  <MultiChipsInline
-                    initial={answers.sellingChannels ?? []}
-                    options={['In-store', 'WhatsApp', 'Instagram', 'Zomato', 'Swiggy', 'ONDC']}
-                    onSave={(v) => saveAnswer('sellingChannels', v)}
-                    saving={saving}
-                  />
-                ) : null
-              }
-            />
-
-            {/* Inventory size */}
-            <Row
-              label="Inventory size"
-              value={answers.inventorySize || '—'}
-              editing={editing === 'inventorySize'}
-              onEdit={() => setEditing('inventorySize')}
-              onCancel={() => setEditing(null)}
-              action={
-                editing === 'inventorySize' ? (
-                  <SelectInline
-                    options={INVENTORY_SIZES}
-                    value={answers.inventorySize || ''}
-                    onChange={(v) => saveAnswer('inventorySize', v)}
-                    saving={saving}
-                  />
-                ) : null
-              }
-            />
-
-            {/* Primary goal */}
-            <Row
-              label="Primary goal"
-              value={answers.primaryGoal || '—'}
-              editing={editing === 'primaryGoal'}
-              onEdit={() => setEditing('primaryGoal')}
-              onCancel={() => setEditing(null)}
-              action={
-                editing === 'primaryGoal' ? (
-                  <SelectInline
-                    options={GOALS}
-                    value={answers.primaryGoal || ''}
-                    onChange={(v) => saveAnswer('primaryGoal', v)}
-                    saving={saving}
-                  />
-                ) : null
-              }
-            />
+      {/* Details card with circular logo on the right */}
+      <div className="mt-8 rounded-2xl bg-white border border-amber-200/50 shadow-sm">
+        {/* Card header */}
+        <div className="px-6 py-4 border-b border-amber-100/60 flex items-center justify-between">
+          <div className="font-semibold text-gray-900">Business details</div>
+          <div className="flex items-center gap-3">
+            <div className="text-xs text-gray-500">Logo</div>
+            <MonogramCircle initials={initials || 'VG'} />
           </div>
         </div>
 
-        {/* Right: Brand tile (no emoji, no storage) */}
-        <div className="rounded-2xl bg-white border border-amber-200/50 shadow-sm p-6">
-          <div className="flex items-center justify-between">
-            <div className="font-semibold text-gray-900">Brand</div>
-          </div>
+        {/* Fields */}
+        <div className="divide-y divide-gray-100">
+          {/* Shop name */}
+          <Row
+            label="Shop name"
+            value={displayName || '—'}
+            editing={editing === 'displayName'}
+            onEdit={() => setEditing('displayName')}
+            onCancel={() => setEditing(null)}
+            action={
+              editing === 'displayName' ? (
+                <div className="flex gap-2 items-center">
+                  <input
+                    className="h-10 rounded-lg border border-gray-300 px-3 text-sm"
+                    value={displayName}
+                    onChange={(e) => setDisplayName(e.target.value)}
+                    placeholder="Shree Ganesh Kirana"
+                  />
+                  <SaveBtn onClick={saveDisplayName} saving={saving} />
+                </div>
+              ) : null
+            }
+          />
 
-          {/* Monogram logo */}
-          <div className="mt-4 flex items-center gap-4">
-            <Monogram initials={initials || 'VG'} />
-            <div className="text-sm text-gray-600">
-              Your basic brand mark is a monogram generated from your shop name.  
-              You can refine this later when Storage is enabled.
-            </div>
-          </div>
+          {/* Business type */}
+          <Row
+            label="Business type"
+            value={answers.businessType || '—'}
+            editing={editing === 'businessType'}
+            onEdit={() => setEditing('businessType')}
+            onCancel={() => setEditing(null)}
+            action={
+              editing === 'businessType' ? (
+                <SelectInline
+                  options={BUSINESS_TYPES}
+                  value={answers.businessType || ''}
+                  onChange={(v) => saveAnswer('businessType', v)}
+                  saving={saving}
+                />
+              ) : null
+            }
+          />
 
-          <div className="mt-6">
-            <div className="text-sm font-medium text-gray-700 mb-1">Initials</div>
-            <div className="inline-flex items-center justify-center rounded-xl border border-gray-200 bg-gray-50 px-3 py-2 text-gray-800">
-              {initials || 'VG'}
-            </div>
-          </div>
+          {/* Location */}
+          <Row
+            label="Location (City, State)"
+            value={answers.locationCity || '—'}
+            editing={editing === 'locationCity'}
+            onEdit={() => setEditing('locationCity')}
+            onCancel={() => setEditing(null)}
+            action={
+              editing === 'locationCity' ? (
+                <TextInline
+                  initial={answers.locationCity || ''}
+                  onSave={(v) => saveAnswer('locationCity', v)}
+                  saving={saving}
+                  placeholder="Pune, Maharashtra"
+                />
+              ) : null
+            }
+          />
+
+          {/* Selling channels */}
+          <Row
+            label="Selling channels"
+            value={(answers.sellingChannels?.length ? answers.sellingChannels : ['—']).join(', ')}
+            editing={editing === 'sellingChannels'}
+            onEdit={() => setEditing('sellingChannels')}
+            onCancel={() => setEditing(null)}
+            action={
+              editing === 'sellingChannels' ? (
+                <MultiChipsInline
+                  initial={answers.sellingChannels ?? []}
+                  options={['In-store', 'WhatsApp', 'Instagram', 'Zomato', 'Swiggy', 'ONDC']}
+                  onSave={(v) => saveAnswer('sellingChannels', v)}
+                  saving={saving}
+                />
+              ) : null
+            }
+          />
+
+          {/* Inventory size */}
+          <Row
+            label="Inventory size"
+            value={answers.inventorySize || '—'}
+            editing={editing === 'inventorySize'}
+            onEdit={() => setEditing('inventorySize')}
+            onCancel={() => setEditing(null)}
+            action={
+              editing === 'inventorySize' ? (
+                <SelectInline
+                  options={INVENTORY_SIZES}
+                  value={answers.inventorySize || ''}
+                  onChange={(v) => saveAnswer('inventorySize', v)}
+                  saving={saving}
+                />
+              ) : null
+            }
+          />
+
+          {/* Primary goal */}
+          <Row
+            label="Primary goal"
+            value={answers.primaryGoal || '—'}
+            editing={editing === 'primaryGoal'}
+            onEdit={() => setEditing('primaryGoal')}
+            onCancel={() => setEditing(null)}
+            action={
+              editing === 'primaryGoal' ? (
+                <SelectInline
+                  options={GOALS}
+                  value={answers.primaryGoal || ''}
+                  onChange={(v) => saveAnswer('primaryGoal', v)}
+                  saving={saving}
+                />
+              ) : null
+            }
+          />
         </div>
       </div>
     </div>
@@ -289,16 +299,17 @@ export default function AccountPage() {
 
 /* ---------- Components ---------- */
 
-function Monogram({ initials }: { initials: string }) {
+/** Circular monogram preview */
+function MonogramCircle({ initials }: { initials: string }) {
   return (
     <div
-      className="w-24 h-24 rounded-2xl flex items-center justify-center text-3xl font-bold text-white shadow-lg"
+      className="w-16 h-16 rounded-full flex items-center justify-center text-xl font-bold text-white shadow-md"
       style={{
         background:
           'radial-gradient(120% 120% at 0% 0%, #f97316 0%, #f59e0b 45%, #10b981 100%)',
         border: '1px solid rgba(0,0,0,0.06)',
       }}
-      title="Brand mark"
+      title="Brand logo preview"
       aria-label="Brand monogram"
     >
       {initials}

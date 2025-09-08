@@ -13,6 +13,8 @@ import {
 
 const BG = 'rgba(0,0,0,0.45)';
 const BRAND_GRADIENT = 'linear-gradient(90deg, #f97316, #f59e0b, #10b981)';
+const DISMISS_KEY = 'vyap:onboarding:dismissed:until';
+const PENDING_KEY = 'vyap:onboarding:pending';
 
 type StepId =
   | 'shopName'
@@ -31,82 +33,107 @@ const STEPS: { id: StepId; title: string }[] = [
   { id: 'primaryGoal',    title: 'What do you want to improve first?' },
 ];
 
+function readDismissed(): boolean {
+  if (typeof window === 'undefined') return false;
+  const raw = localStorage.getItem(DISMISS_KEY);
+  if (!raw) return false;
+  const until = Number(raw);
+  return Number.isFinite(until) && Date.now() < until;
+}
+function dismissForDays(days = 7) {
+  if (typeof window === 'undefined') return;
+  const ms = days * 24 * 60 * 60 * 1000;
+  localStorage.setItem(DISMISS_KEY, String(Date.now() + ms));
+}
+
 export default function OnboardingGate() {
+  // --- State hooks (always called, never conditional)
   const [uid, setUid] = useState<string | null>(null);
   const [checking, setChecking] = useState(true);
   const [show, setShow] = useState(false);
-
-  // wizard state
   const [stepIdx, setStepIdx] = useState(0);
   const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
   const [answers, setAnswers] = useState<OnboardingAnswers>({});
 
-  // 1) Watch auth and decide to show
+  // --- Effects (always called)
   useEffect(() => {
     const unsub = onAuthStateChanged(auth, async (user) => {
-      if (!user) {
-        setUid(null);
+      try {
+        if (!user) {
+          setUid(null);
+          setShow(false);
+          return;
+        }
+        setUid(user.uid);
+
+        await ensureUserDoc(user.uid);
+
+        const pending = typeof window !== 'undefined'
+          ? localStorage.getItem(PENDING_KEY) === '1'
+          : false;
+        const dismissed = readDismissed();
+
+        const { complete } = await getOnboardingStatus(user.uid);
+
+        const shouldShow = (pending || !complete) && !dismissed;
+        setShow(shouldShow);
+
+        try { localStorage.removeItem(PENDING_KEY); } catch {}
+      } catch (e: any) {
+        setErr(e?.message || 'Could not check onboarding status.');
         setShow(false);
+      } finally {
         setChecking(false);
-        return;
       }
-      setUid(user.uid);
-
-      // make sure user doc exists
-      await ensureUserDoc(user.uid);
-
-      // local flag from signup redirect (if you set it)
-      const pending = typeof window !== 'undefined'
-        ? localStorage.getItem('vyap:onboarding:pending') === '1'
-        : false;
-
-      // firestore flag
-      const { complete } = await getOnboardingStatus(user.uid);
-
-      // show only if new or incomplete
-      const shouldShow = pending || !complete;
-      setShow(shouldShow);
-
-      // clean the one-shot local flag so it won’t persist forever
-      try { localStorage.removeItem('vyap:onboarding:pending'); } catch {}
-      setChecking(false);
     });
     return () => unsub();
   }, []);
 
-  if (checking || !show || !uid) return null;
-
-  /** ---------- Progress + validation ---------- */
-  const step = STEPS[stepIdx];
-  const pct = Math.round(((stepIdx + 1) / STEPS.length) * 100);
+  // --- Derived values (hooks still ALWAYS called)
+  const step = STEPS[Math.min(stepIdx, STEPS.length - 1)];
+  const pct = Math.round(((Math.min(stepIdx, STEPS.length - 1) + 1) / STEPS.length) * 100);
 
   const canNext = useMemo(() => {
     switch (step.id) {
-      case 'shopName':       return !!answers.shopName?.trim();
-      case 'businessType':   return !!answers.businessType;
-      case 'locationCity':   return !!answers.locationCity?.trim();
-      case 'sellingChannels':return (answers.sellingChannels?.length || 0) > 0;
-      case 'inventorySize':  return !!answers.inventorySize;
-      case 'primaryGoal':    return !!answers.primaryGoal;
-      default:               return false;
+      case 'shopName':        return !!answers.shopName?.trim();
+      case 'businessType':    return !!answers.businessType;
+      case 'locationCity':    return !!answers.locationCity?.trim();
+      case 'sellingChannels': return (answers.sellingChannels?.length || 0) > 0;
+      case 'inventorySize':   return !!answers.inventorySize;
+      case 'primaryGoal':     return !!answers.primaryGoal;
+      default:                return false;
     }
   }, [step.id, answers]);
 
+  // --- Handlers (never conditionally declared)
   const goNext = () => setStepIdx((i) => (i < STEPS.length - 1 ? i + 1 : i));
   const goBack = () => setStepIdx((i) => (i > 0 ? i - 1 : i));
 
   async function finish() {
     if (!uid) return;
     setBusy(true);
+    setErr(null);
     try {
       await saveOnboarding(uid, { ...answers }, { complete: true });
-      setShow(false); // never show again
+      setShow(false);
+    } catch (e: any) {
+      setErr(e?.message || 'Could not save. Please try again.');
     } finally {
       setBusy(false);
     }
   }
 
-  /** ---------- Step body ---------- */
+  function skipForNow() {
+    dismissForDays(7);
+    setShow(false);
+  }
+
+  // --- Gate the UI AFTER all hooks have run
+  const gated = checking || !uid || !show;
+  if (gated) return null;
+
+  // --- Step body
   function StepBody() {
     switch (step.id) {
       case 'shopName':
@@ -218,7 +245,7 @@ export default function OnboardingGate() {
     }
   }
 
-  /** ---------- Modal ---------- */
+  // --- Modal
   return (
     <div className="fixed inset-0 z-[999] flex items-center justify-center" style={{ background: BG }}>
       <div className="w-full max-w-xl rounded-2xl overflow-hidden bg-white"
@@ -246,7 +273,7 @@ export default function OnboardingGate() {
           </div>
           <button
             className="text-sm text-gray-600 hover:text-gray-900"
-            onClick={() => setShow(false)}
+            onClick={skipForNow}
           >
             Skip for now
           </button>
@@ -299,6 +326,8 @@ export default function OnboardingGate() {
               </button>
             )}
           </div>
+
+          {err && <p className="mt-3 text-sm text-red-600">{err}</p>}
         </div>
       </div>
     </div>

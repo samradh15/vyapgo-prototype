@@ -30,16 +30,10 @@ export default function OnboardingModal() {
     setSaving(true);
     try {
       await saveOnboarding(user.uid, {
-        storeName: answers.storeName || '',
+        shopName: answers.storeName || '',
         businessType: answers.businessType || '',
-        categories: (answers.categories || '')
-          .toString()
-          .split(',')
-          .map((s: string) => s.trim())
-          .filter(Boolean),
-        location: answers.location || '',
-        teamSize: Number(answers.teamSize || 0),
-        goal: answers.goal || '',
+        locationCity: answers.location || '',
+        primaryGoal: answers.goal || '',
       });
       await refreshProfile();
     } finally {

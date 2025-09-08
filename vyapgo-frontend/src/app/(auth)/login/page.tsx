@@ -1,15 +1,14 @@
 'use client';
 
-import React, { useEffect, useRef, useState, useCallback } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import Image from 'next/image';
-import { useRouter } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
 import {
   ensureRecaptcha,
-  signInWithGoogle,
-  signInWithApple,
   sendOtp,
-  verifyOtp,
+  signInWithGoogleDetailed,
+  verifyOtpDetailed,
 } from '@/lib/auth-client';
 
 /** ---------- Theme tokens ---------- */
@@ -17,6 +16,7 @@ const BG = '#F6F0E6';
 const OUTER_BORDER = 'rgba(251,191,36,0.35)';
 const BRAND_GRADIENT = 'linear-gradient(90deg, #f97316, #f59e0b, #10b981)';
 const OTP_LEN = 6;
+const RESEND_COOLDOWN = 30; // seconds
 
 /** ---------- Small helpers ---------- */
 function BrandRow({ label = 'VyapGO App' }) {
@@ -27,11 +27,7 @@ function BrandRow({ label = 'VyapGO App' }) {
       </span>
       <span
         className="font-semibold tracking-tight"
-        style={{
-          background: BRAND_GRADIENT,
-          WebkitBackgroundClip: 'text',
-          WebkitTextFillColor: 'transparent',
-        }}
+        style={{ background: BRAND_GRADIENT, WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent' }}
       >
         {label}
       </span>
@@ -39,7 +35,7 @@ function BrandRow({ label = 'VyapGO App' }) {
   );
 }
 
-/** ---------- Auto-running mobile preview (left) ---------- */
+/** ---------- Left preview (optional eye-candy) ---------- */
 function AutoPreview() {
   type Tab = 'inventory' | 'sales' | 'staff';
   const [tab, setTab] = useState<Tab>('inventory');
@@ -99,7 +95,6 @@ function AutoPreview() {
             <div className="text-white/90 font-semibold">
               {tab === 'inventory' ? 'Inventory Management' : tab === 'sales' ? 'Sales Overview' : 'Staff'}
             </div>
-
             {tab === 'inventory' && (
               <div className="mt-4 grid grid-cols-2 gap-3">
                 <div className="rounded-xl bg-white/5 border border-white/10 p-3">
@@ -117,13 +112,11 @@ function AutoPreview() {
                   >
                     <div>
                       <div className="text-white/90 text-sm font-medium">{name}</div>
-                      <div className="text-white/55 text-xs">
-                        Stock: {i === 0 ? '100' : i === 1 ? '150' : '75'}
-                      </div>
+                      <div className="text-white/55 text-xs">Stock: {i === 0 ? '100' : i === 1 ? '150' : '75'}</div>
                     </div>
                     <button
                       className={`px-3 py-1.5 rounded-lg text-xs font-medium border ${
-                        (pulse % 3 === 0 && i === 0)
+                        pulse % 3 === 0 && i === 0
                           ? 'border-amber-300 bg-amber-300/10 text-amber-200'
                           : 'border-white/15 text-white/80'
                       }`}
@@ -134,7 +127,6 @@ function AutoPreview() {
                 ))}
               </div>
             )}
-
             {tab === 'sales' && (
               <div className="mt-4 space-y-3">
                 {[
@@ -142,7 +134,10 @@ function AutoPreview() {
                   { id: 'INV-002', amt: '₹1,200', mode: 'UPI' },
                   { id: 'INV-003', amt: '₹650', mode: 'Card' },
                 ].map((s, i) => (
-                  <div key={s.id} className="rounded-xl bg-white/5 border border-white/10 p-3 flex items-center justify-between">
+                  <div
+                    key={s.id}
+                    className="rounded-xl bg-white/5 border border-white/10 p-3 flex items-center justify-between"
+                  >
                     <div className="text-white/85">
                       <div className="text-sm font-medium">{s.id}</div>
                       <div className="text-xs text-white/60">
@@ -151,7 +146,7 @@ function AutoPreview() {
                     </div>
                     <span
                       className={`text-[11px] px-2.5 py-1 rounded-full border ${
-                        (pulse % 3 === 1 && i === 1)
+                        pulse % 3 === 1 && i === 1
                           ? 'border-emerald-300 text-emerald-200 bg-emerald-300/10'
                           : 'border-white/15 text-white/75'
                       }`}
@@ -162,7 +157,6 @@ function AutoPreview() {
                 ))}
               </div>
             )}
-
             {tab === 'staff' && (
               <div className="mt-4">
                 <div className="grid grid-cols-2 gap-3">
@@ -175,16 +169,13 @@ function AutoPreview() {
                     <div className="text-white/60 text-xs mt-1">Monthly Payroll</div>
                   </div>
                 </div>
-                {['Rajesh • Manager', 'Priya • Cashier', 'Suresh • Helper'].map((n, i) => (
-                  <div key={n} className="mt-2 rounded-xl bg-white/5 border border-white/10 p-3 flex items-center justify-between">
+                {['Rajesh • Manager', 'Priya • Cashier', 'Suresh • Helper'].map((n) => (
+                  <div
+                    key={n}
+                    className="mt-2 rounded-xl bg-white/5 border border-white/10 p-3 flex items-center justify-between"
+                  >
                     <div className="text-white/85 text-sm">{n}</div>
-                    <button
-                      className={`px-3 py-1.5 rounded-lg text-xs font-medium border ${
-                        (pulse % 3 === 2 && i === 2)
-                          ? 'border-amber-300 bg-amber-300/10 text-amber-200'
-                          : 'border-white/15 text-white/80'
-                      }`}
-                    >
+                    <button className="px-3 py-1.5 rounded-lg text-xs font-medium border border-white/15 text-white/80">
                       Details
                     </button>
                   </div>
@@ -196,8 +187,6 @@ function AutoPreview() {
             )}
           </div>
         </div>
-
-        {/* Tap ripple */}
         <div
           className="absolute pointer-events-none"
           style={{
@@ -213,27 +202,23 @@ function AutoPreview() {
   );
 }
 
-/** ---------- Right-side login panel (wired) ---------- */
+/** ---------- Right-side login panel (phone + Google, with resend OTP) ---------- */
 function LoginPanel() {
   const router = useRouter();
-
-  // helper: set pending flag and go home
-  const redirectHome = useCallback(() => {
-    try {
-      // show onboarding on homepage
-      localStorage.setItem('vyap:onboarding:pending', '1');
-    } catch {}
-    router.push('/');
-  }, [router]);
+  const search = useSearchParams();
+  const target = search.get('next') || '/';
 
   const [dial, setDial] = useState('+91');
   const [phone, setPhone] = useState('');
   const [otpSent, setOtpSent] = useState(false);
   const [code, setCode] = useState('');
-  const [cooldown, setCooldown] = useState(0);
-  const [loading, setLoading] =
-    useState<null | 'google' | 'apple' | 'otp-send' | 'otp-verify'>(null);
+
+  const [loading, setLoading] = useState<null | 'google' | 'otp-send' | 'otp-verify'>(null);
   const [error, setError] = useState<string | null>(null);
+
+  // resend cooldown
+  const [cooldown, setCooldown] = useState(0);
+  const timerRef = useRef<number | null>(null);
 
   useEffect(() => {
     ensureRecaptcha('recaptcha-container');
@@ -241,33 +226,37 @@ function LoginPanel() {
 
   useEffect(() => {
     if (cooldown <= 0) return;
-    const t = setInterval(() => setCooldown((c) => c - 1), 1000);
-    return () => clearInterval(t);
+    timerRef.current = window.setInterval(() => {
+      setCooldown((c) => (c > 0 ? c - 1 : 0));
+    }, 1000) as any;
+    return () => {
+      if (timerRef.current) window.clearInterval(timerRef.current);
+    };
   }, [cooldown]);
 
   const fullPhone = `${dial}${phone.replace(/\D/g, '')}`;
+
+  function flagOnboarding(isNew: boolean) {
+    if (!isNew) return;
+    try { localStorage.setItem('vyap:onboarding:pending', '1'); } catch {}
+  }
 
   async function handleGoogle() {
     setError(null);
     setLoading('google');
     try {
-      await signInWithGoogle();
-      redirectHome();
+      const res: any = await signInWithGoogleDetailed();
+      if (res?.needsLinking) {
+        setError(
+          res?.message ||
+            'This email is already used with a different sign-in method. Sign in with your original method and link Google from Account settings.'
+        );
+        return;
+      }
+      flagOnboarding(!!res?.isNewUser);
+      router.replace(target);
     } catch (e: any) {
       setError(e?.message || 'Google sign-in failed');
-    } finally {
-      setLoading(null);
-    }
-  }
-
-  async function handleApple() {
-    setError(null);
-    setLoading('apple');
-    try {
-      await signInWithApple();
-      redirectHome();
-    } catch (e: any) {
-      setError(e?.message || 'Apple sign-in failed');
     } finally {
       setLoading(null);
     }
@@ -283,12 +272,17 @@ function LoginPanel() {
     try {
       await sendOtp(fullPhone);
       setOtpSent(true);
-      setCooldown(30);
+      setCooldown(RESEND_COOLDOWN);
     } catch (e: any) {
       setError(e?.message || 'Failed to send OTP');
     } finally {
       setLoading(null);
     }
+  }
+
+  async function handleResend() {
+    if (cooldown > 0 || loading) return;
+    await handleSendOtp();
   }
 
   async function handleVerifyOtp() {
@@ -299,19 +293,13 @@ function LoginPanel() {
     }
     setLoading('otp-verify');
     try {
-      await verifyOtp(code);
-      redirectHome();
+      const res = await verifyOtpDetailed(code);
+      flagOnboarding(!!(res as any)?.isNewUser);
+      router.replace(target);
     } catch (e: any) {
       setError(e?.message || 'Invalid OTP');
     } finally {
       setLoading(null);
-    }
-  }
-
-  function onKeyDown(e: React.KeyboardEvent<HTMLInputElement>) {
-    if (e.key === 'Enter') {
-      if (!otpSent) handleSendOtp();
-      else handleVerifyOtp();
     }
   }
 
@@ -324,42 +312,26 @@ function LoginPanel() {
         </span>
         <span
           className="font-semibold text-lg"
-          style={{
-            background: BRAND_GRADIENT,
-            WebkitBackgroundClip: 'text',
-            WebkitTextFillColor: 'transparent',
-          }}
+          style={{ background: BRAND_GRADIENT, WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent' }}
         >
           VyapGO
         </span>
       </div>
 
-      <h1 className="mt-4 text-xl font-semibold text-gray-900">Welcome back</h1>
-      <p className="text-sm text-gray-600 mt-1">Log in with your phone, Google, or Apple ID.</p>
+      <h1 className="mt-4 text-xl font-semibold text-gray-900">Welcome</h1>
+      <p className="text-sm text-gray-600 mt-1">Continue with your phone or Google account.</p>
 
-      {/* SSO */}
-      <div className="mt-5 space-y-3">
+      {/* Google */}
+      <div className="mt-5">
         <button
           onClick={handleGoogle}
           disabled={loading !== null}
           className="w-full h-11 rounded-xl border border-gray-200 hover:border-gray-300 bg-white text-gray-800 font-medium flex items-center justify-center gap-2 transition disabled:opacity-60"
-          aria-busy={loading === 'google'}
         >
           <span className="relative w-5 h-5">
             <Image src="/images/google.png" alt="Google" fill className="object-contain" />
           </span>
           {loading === 'google' ? 'Connecting…' : 'Continue with Google'}
-        </button>
-        <button
-          onClick={handleApple}
-          disabled={loading !== null}
-          className="w-full h-11 rounded-xl border border-gray-200 hover:border-gray-300 bg-white text-gray-800 font-medium flex items-center justify-center gap-2 transition disabled:opacity-60"
-          aria-busy={loading === 'apple'}
-        >
-          <span className="relative w-5 h-5">
-            <Image src="/images/apple.png" alt="Apple" fill className="object-contain" />
-          </span>
-          {loading === 'apple' ? 'Connecting…' : 'Continue with Apple'}
         </button>
       </div>
 
@@ -389,8 +361,6 @@ function LoginPanel() {
           className="h-11 flex-1 rounded-xl border border-amber-300/60 bg-white px-3 text-gray-800 placeholder:text-gray-400 outline-none focus:ring-2 focus:ring-amber-300/60"
           value={phone}
           onChange={(e) => setPhone(e.target.value)}
-          onKeyDown={onKeyDown}
-          aria-label="Phone number"
         />
       </div>
 
@@ -400,7 +370,6 @@ function LoginPanel() {
           disabled={loading !== null}
           className="mt-4 w-full h-11 rounded-xl font-semibold text-white shadow-lg transition-transform active:scale-[0.99] disabled:opacity-60"
           style={{ background: BRAND_GRADIENT }}
-          aria-busy={loading === 'otp-send'}
         >
           {loading === 'otp-send' ? 'Sending OTP…' : 'Continue with phone'}
         </button>
@@ -412,51 +381,41 @@ function LoginPanel() {
             inputMode="numeric"
             placeholder={`${OTP_LEN}-digit code`}
             maxLength={OTP_LEN}
-            className="mt-1.5 h-11 w-full rounded-xl border border-amber-300/60 bg-white px-3 text-gray-800 placeholder:text-gray-400 outline-none focus:ring-2 focus:ring-amber-300/60 tracking-widest"
+            className="mt-1.5 h-11 w-full rounded-xl border border-amber-300/60 bg-white px-3 text-gray-800 placeholder:text-gray-400 outline-none focus:ring-2 focus:ring-amber-300/60"
             value={code}
             onChange={(e) => setCode(e.target.value.replace(/\D/g, '').slice(0, OTP_LEN))}
-            onKeyDown={onKeyDown}
-            aria-label="One-time password"
           />
-          <div className="mt-2 flex items-center justify-between text-xs text-gray-600">
-            <span>Didn’t get the code?</span>
+
+          <div className="mt-3 flex items-center justify-between">
             <button
-              type="button"
-              onClick={handleSendOtp}
+              onClick={handleVerifyOtp}
+              disabled={loading !== null}
+              className="h-11 px-4 rounded-xl font-semibold text-white shadow-lg transition-transform active:scale-[0.99] disabled:opacity-60"
+              style={{ background: BRAND_GRADIENT }}
+            >
+              {loading === 'otp-verify' ? 'Verifying…' : 'Verify & continue'}
+            </button>
+
+            <button
+              onClick={handleResend}
               disabled={cooldown > 0 || loading !== null}
-              className={`font-medium ${cooldown > 0 ? 'text-gray-400 cursor-not-allowed' : 'text-orange-700 hover:underline'}`}
+              className="text-sm text-gray-700 hover:text-gray-900 disabled:opacity-60"
             >
               {cooldown > 0 ? `Resend in ${cooldown}s` : 'Resend OTP'}
             </button>
           </div>
-          <button
-            onClick={handleVerifyOtp}
-            disabled={loading !== null}
-            className="mt-3 w-full h-11 rounded-xl font-semibold text-white shadow-lg transition-transform active:scale-[0.99] disabled:opacity-60"
-            style={{ background: BRAND_GRADIENT }}
-            aria-busy={loading === 'otp-verify'}
-          >
-            {loading === 'otp-verify' ? 'Verifying…' : 'Verify & continue'}
-          </button>
         </>
       )}
 
       {/* Error */}
-      <p className="mt-3 text-sm text-red-600 min-h-[1.25rem]" role="alert" aria-live="polite">
-        {error || ''}
-      </p>
+      {error && <p className="mt-3 text-sm text-red-600">{error}</p>}
 
       {/* Footer */}
       <div className="mt-5 flex items-center justify-between text-sm text-gray-600">
         <div>
-          Don’t have an account?{' '}
-          <Link href="/signup" className="text-orange-700 font-medium hover:underline">
-            Sign up
-          </Link>
+          New here? <span className="text-gray-800">Just sign in — we’ll create your account automatically.</span>
         </div>
-        <Link href="/" className="hover:text-gray-900">
-          Back to home
-        </Link>
+        <Link href="/" className="hover:text-gray-900">Back to home</Link>
       </div>
 
       {/* Invisible reCAPTCHA anchor */}
@@ -508,6 +467,7 @@ export default function LoginUnified() {
             <AutoPreview />
           </div>
         </section>
+
         <section className="p-6 lg:p-8 lg:w-1/2">
           <LoginPanel />
         </section>

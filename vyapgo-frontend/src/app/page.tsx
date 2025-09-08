@@ -16,7 +16,7 @@ export default function Home() {
       <AppCreationPreview />
       <PricingSection />
       <Footer />
-      <OnboardingModal />
+      
       <OnboardingGate />
     </main>
   );

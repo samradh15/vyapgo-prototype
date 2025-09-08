@@ -11,10 +11,12 @@ import {
   inMemoryPersistence,
   RecaptchaVerifier,
   signInWithPhoneNumber,
+  linkWithPhoneNumber,
   ConfirmationResult,
   GoogleAuthProvider,
   OAuthProvider,
   signInWithPopup,
+  linkWithPopup,
   getAdditionalUserInfo,
   type User,
 } from 'firebase/auth';
@@ -45,29 +47,43 @@ export async function signOutUser() {
   await signOut(auth);
 }
 
-/** ---- Phone OTP (invisible reCAPTCHA) ---- */
-let recaptchaVerifier: RecaptchaVerifier | null = null;
-let confirmationResult: ConfirmationResult | null = null;
+/** =========================================================
+ *  reCAPTCHA (per-container) + OTP flows
+ * ======================================================= */
+const verifiers: Record<string, RecaptchaVerifier> = {};
+let signInConfirmation: ConfirmationResult | null = null;
+let linkConfirmation: ConfirmationResult | null = null;
 
-export function ensureRecaptcha(containerId = 'recaptcha-container') {
-  if (recaptchaVerifier) return recaptchaVerifier;
-  recaptchaVerifier = new RecaptchaVerifier(auth, containerId, { size: 'invisible' });
+/**
+ * Ensure an (optionally invisible) reCAPTCHA verifier exists for a container.
+ * - containerId should match a DOM element id.
+ * - invisible=true is best for auth actions.
+ */
+export function ensureRecaptcha(containerId = 'recaptcha-container', invisible = true) {
+  if (verifiers[containerId]) return verifiers[containerId];
+  const v = new RecaptchaVerifier(auth, containerId, {
+    size: invisible ? 'invisible' : 'normal',
+  });
   try {
-    // in some environments this is needed to instantiate the widget
-    (recaptchaVerifier as any).render?.();
+    // Some environments require an explicit render to instantiate the widget
+    (v as any).render?.();
   } catch {}
-  return recaptchaVerifier;
+  verifiers[containerId] = v;
+  return v;
 }
 
-export async function sendOtp(e164Phone: string) {
-  if (!recaptchaVerifier) ensureRecaptcha();
-  confirmationResult = await signInWithPhoneNumber(auth, e164Phone, recaptchaVerifier!);
+/** ---- Phone OTP: SIGN-IN (login page) ---- */
+export async function sendOtp(e164Phone: string, containerId = 'recaptcha-container') {
+  const verifier = ensureRecaptcha(containerId, true);
+  signInConfirmation = await signInWithPhoneNumber(auth, e164Phone, verifier);
   return true;
 }
 
 export async function verifyOtpDetailed(code: string): Promise<SignInResult> {
-  if (!confirmationResult) throw new Error('OTP was not requested');
-  const cred = await confirmationResult.confirm(code);
+  if (!signInConfirmation) throw new Error('OTP was not requested');
+  const cred = await signInConfirmation.confirm(code);
+  signInConfirmation = null;
+
   const info = getAdditionalUserInfo(cred);
   const isNewUser =
     !!(info?.isNewUser ??
@@ -75,7 +91,7 @@ export async function verifyOtpDetailed(code: string): Promise<SignInResult> {
   return { user: cred.user, isNewUser };
 }
 
-/** ---- Google / Apple ---- */
+/** ---- Google / Apple (SIGN-IN) ---- */
 export async function signInWithGoogleDetailed(): Promise<SignInResult> {
   const provider = new GoogleAuthProvider();
   const cred = await signInWithPopup(auth, provider);
@@ -94,6 +110,56 @@ export async function signInWithAppleDetailed(): Promise<SignInResult> {
     !!(info?.isNewUser ??
       (cred.user.metadata.creationTime === cred.user.metadata.lastSignInTime));
   return { user: cred.user, isNewUser };
+}
+
+/** =========================================================
+ *  Account Linking (from Account page)
+ * ======================================================= */
+
+/** Link Google to the currently signed-in user */
+export async function linkGoogle(): Promise<{ ok: true } | { ok: false; message: string }> {
+  const user = auth.currentUser;
+  if (!user) return { ok: false, message: 'Not signed in' };
+  try {
+    await linkWithPopup(user, new GoogleAuthProvider());
+    return { ok: true };
+  } catch (e: any) {
+    const msg =
+      e?.code === 'auth/credential-already-in-use'
+        ? 'This Google account is already linked to another user.'
+        : e?.message || 'Google linking failed';
+    return { ok: false, message: msg };
+  }
+}
+
+/** Start linking a phone number (sends OTP) */
+export async function startLinkPhone(
+  e164Phone: string,
+  containerId = 'recaptcha-link'
+): Promise<{ ok: true } | { ok: false; message: string }> {
+  const user = auth.currentUser;
+  if (!user) return { ok: false, message: 'Not signed in' };
+  try {
+    const verifier = ensureRecaptcha(containerId, true);
+    linkConfirmation = await linkWithPhoneNumber(user, e164Phone, verifier);
+    return { ok: true };
+  } catch (e: any) {
+    return { ok: false, message: e?.message || 'Failed to send OTP for linking' };
+  }
+}
+
+/** Verify the OTP and finish linking the phone number */
+export async function verifyLinkPhone(
+  code: string
+): Promise<{ ok: true } | { ok: false; message: string }> {
+  if (!linkConfirmation) return { ok: false, message: 'No pending OTP verification' };
+  try {
+    await linkConfirmation.confirm(code);
+    linkConfirmation = null;
+    return { ok: true };
+  } catch (e: any) {
+    return { ok: false, message: e?.message || 'Invalid OTP' };
+  }
 }
 
 /** ---- Persistence (lighter in dev) ---- */

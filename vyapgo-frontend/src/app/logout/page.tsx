@@ -1,28 +1,35 @@
 'use client';
 
-import { useEffect } from 'react';
-import { useRouter } from 'next/navigation';
+import { useEffect, useRef } from 'react';
 import { signOut } from 'firebase/auth';
 import { auth } from '@/lib/auth-client';
 
 export default function LogoutPage() {
-  const router = useRouter();
+  // Guard against double-running in React Strict Mode (dev)
+  const ran = useRef(false);
 
   useEffect(() => {
-    const doLogout = async () => {
+    if (ran.current) return;
+    ran.current = true;
+
+    (async () => {
       try {
-        // clear any onboarding one-shot flag
-        try { localStorage.removeItem('vyap:onboarding:pending'); } catch {}
+        // Clear any one-shot onboarding flag
+        try {
+          localStorage.removeItem('vyap:onboarding:pending');
+        } catch {
+          /* no-op */
+        }
 
         await signOut(auth);
       } catch {
-        // ignore error—we'll still try to move on
+        // ignore error—we'll still navigate away
       } finally {
-        router.replace('/'); // go home after sign out
+        // Hard redirect to fully reset client state/UI
+        window.location.replace('/');
       }
-    };
-    doLogout();
-  }, [router]);
+    })();
+  }, []);
 
   return (
     <div className="min-h-[60vh] flex items-center justify-center text-gray-700">
