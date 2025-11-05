@@ -1,6 +1,7 @@
 'use client';
 
 import { getApps, initializeApp } from 'firebase/app';
+import { signInWithCustomToken } from 'firebase/auth';
 import {
   getAuth,
   onAuthStateChanged,
@@ -12,6 +13,7 @@ import {
   RecaptchaVerifier,
   signInWithPhoneNumber,
   linkWithPhoneNumber,
+  unlink,
   ConfirmationResult,
   GoogleAuthProvider,
   OAuthProvider,
@@ -48,28 +50,27 @@ export async function signOutUser() {
 }
 
 /** =========================================================
- *  reCAPTCHA (per-container) + OTP flows
+ *  reCAPTCHA (multi-container) + OTP flows
  * ======================================================= */
 const verifiers: Record<string, RecaptchaVerifier> = {};
-let signInConfirmation: ConfirmationResult | null = null;
-let linkConfirmation: ConfirmationResult | null = null;
+let signInConfirmation: ConfirmationResult | null = null;   // phone SIGN-IN
+let linkConfirmation: ConfirmationResult | null = null;      // phone LINKING
 
 /**
- * Ensure an (optionally invisible) reCAPTCHA verifier exists for a container.
- * - containerId should match a DOM element id.
- * - invisible=true is best for auth actions.
+ * Ensure a reCAPTCHA verifier exists for a DOM container id.
+ * Set invisible=true for auth actions.
  */
 export function ensureRecaptcha(containerId = 'recaptcha-container', invisible = true) {
   if (verifiers[containerId]) return verifiers[containerId];
-  const v = new RecaptchaVerifier(auth, containerId, {
+  const verifier = new RecaptchaVerifier(auth, containerId, {
     size: invisible ? 'invisible' : 'normal',
   });
   try {
-    // Some environments require an explicit render to instantiate the widget
-    (v as any).render?.();
+    // Some environments require explicit render
+    (verifiers[containerId] as any)?.render?.();
   } catch {}
-  verifiers[containerId] = v;
-  return v;
+  verifiers[containerId] = verifier;
+  return verifier;
 }
 
 /** ---- Phone OTP: SIGN-IN (login page) ---- */
@@ -113,54 +114,64 @@ export async function signInWithAppleDetailed(): Promise<SignInResult> {
 }
 
 /** =========================================================
- *  Account Linking (from Account page)
+ *  Account Linking (Account page)
  * ======================================================= */
 
+/** Current linked provider ids (e.g. ['google.com','phone']) */
+export function getProviderIds(): string[] {
+  return auth.currentUser?.providerData.map(p => p.providerId) ?? [];
+}
+
 /** Link Google to the currently signed-in user */
-export async function linkGoogle(): Promise<{ ok: true } | { ok: false; message: string }> {
+export async function linkGoogleToCurrent(): Promise<User> {
   const user = auth.currentUser;
-  if (!user) return { ok: false, message: 'Not signed in' };
-  try {
-    await linkWithPopup(user, new GoogleAuthProvider());
-    return { ok: true };
-  } catch (e: any) {
-    const msg =
-      e?.code === 'auth/credential-already-in-use'
-        ? 'This Google account is already linked to another user.'
-        : e?.message || 'Google linking failed';
-    return { ok: false, message: msg };
-  }
+  if (!user) throw new Error('Not signed in');
+  const cred = await linkWithPopup(user, new GoogleAuthProvider());
+  return cred.user;
 }
 
 /** Start linking a phone number (sends OTP) */
 export async function startLinkPhone(
   e164Phone: string,
-  containerId = 'recaptcha-link'
-): Promise<{ ok: true } | { ok: false; message: string }> {
+  containerId = 'recaptcha-link-anchor'
+): Promise<void> {
   const user = auth.currentUser;
-  if (!user) return { ok: false, message: 'Not signed in' };
-  try {
-    const verifier = ensureRecaptcha(containerId, true);
-    linkConfirmation = await linkWithPhoneNumber(user, e164Phone, verifier);
-    return { ok: true };
-  } catch (e: any) {
-    return { ok: false, message: e?.message || 'Failed to send OTP for linking' };
-  }
+  if (!user) throw new Error('Not signed in');
+  const verifier = ensureRecaptcha(containerId, true);
+  linkConfirmation = await linkWithPhoneNumber(user, e164Phone, verifier);
 }
 
 /** Verify the OTP and finish linking the phone number */
-export async function verifyLinkPhone(
-  code: string
-): Promise<{ ok: true } | { ok: false; message: string }> {
-  if (!linkConfirmation) return { ok: false, message: 'No pending OTP verification' };
-  try {
-    await linkConfirmation.confirm(code);
-    linkConfirmation = null;
-    return { ok: true };
-  } catch (e: any) {
-    return { ok: false, message: e?.message || 'Invalid OTP' };
-  }
+export async function verifyLinkPhone(code: string): Promise<User> {
+  if (!linkConfirmation) throw new Error('No pending OTP verification');
+  const cred = await linkConfirmation.confirm(code);
+  linkConfirmation = null;
+  return cred.user;
 }
+
+/** Safely unlink a provider (requires at least one other linked method) */
+export async function unlinkProviderSafe(providerId: 'google.com' | 'apple.com' | 'phone') {
+  const user = auth.currentUser;
+  if (!user) throw new Error('Not signed in');
+  if (user.providerData.length <= 1) {
+    throw new Error('Add another sign-in method before unlinking this one');
+  }
+  await unlink(user, providerId);
+}
+
+export async function signInWithCustomJwt(token: string): Promise<{ user: any; isNewUser: boolean }> {
+    const cred = await signInWithCustomToken(auth, token);
+    const isNewUser =
+      cred.user.metadata.creationTime === cred.user.metadata.lastSignInTime;
+    return { user: cred.user, isNewUser };
+  }
+
+  export async function signInWithCustomTokenClient(customToken: string) {
+    const cred = await signInWithCustomToken(auth, customToken);
+    const isNewUser =
+      cred.user.metadata.creationTime === cred.user.metadata.lastSignInTime;
+    return { user: cred.user, isNewUser };
+  }  
 
 /** ---- Persistence (lighter in dev) ---- */
 const devPersistence = process.env.NEXT_PUBLIC_AUTH_PERSISTENCE || 'session'; // 'session' | 'none' | 'local'

@@ -5,18 +5,23 @@ import Link from 'next/link';
 import Image from 'next/image';
 import { useRouter, useSearchParams } from 'next/navigation';
 import {
+  // Firebase OTP bits (fallback)
   ensureRecaptcha,
   sendOtp,
-  signInWithGoogleDetailed,
   verifyOtpDetailed,
+  // Optional Google SSO
+  signInWithGoogleDetailed,
+  // Server-OTP sign-in (custom token)
+  signInWithCustomTokenClient,
 } from '@/lib/auth-client';
 
-/** ---------- Theme tokens ---------- */
+/** ---------- Theme / Config ---------- */
 const BG = '#F6F0E6';
 const OUTER_BORDER = 'rgba(251,191,36,0.35)';
 const BRAND_GRADIENT = 'linear-gradient(90deg, #f97316, #f59e0b, #10b981)';
 const OTP_LEN = 6;
 const RESEND_COOLDOWN = 30; // seconds
+const USE_SERVER_OTP = process.env.NEXT_PUBLIC_USE_SERVER_OTP === '1';
 
 /** ---------- Small helpers ---------- */
 function BrandRow({ label = 'VyapGO App' }) {
@@ -35,7 +40,7 @@ function BrandRow({ label = 'VyapGO App' }) {
   );
 }
 
-/** ---------- Left preview (optional eye-candy) ---------- */
+/** ---------- Left preview (eye-candy) ---------- */
 function AutoPreview() {
   type Tab = 'inventory' | 'sales' | 'staff';
   const [tab, setTab] = useState<Tab>('inventory');
@@ -202,7 +207,7 @@ function AutoPreview() {
   );
 }
 
-/** ---------- Right-side login panel (phone + Google, with resend OTP) ---------- */
+/** ---------- Right-side login panel (Phone-first; Server-OTP or Firebase OTP) ---------- */
 function LoginPanel() {
   const router = useRouter();
   const search = useSearchParams();
@@ -220,8 +225,9 @@ function LoginPanel() {
   const [cooldown, setCooldown] = useState(0);
   const timerRef = useRef<number | null>(null);
 
+  // Only initialize Firebase reCAPTCHA if we're using Firebase OTP
   useEffect(() => {
-    ensureRecaptcha('recaptcha-container');
+    if (!USE_SERVER_OTP) ensureRecaptcha('recaptcha-container');
   }, []);
 
   useEffect(() => {
@@ -262,6 +268,32 @@ function LoginPanel() {
     }
   }
 
+  // --- Server-OTP helpers ---
+  async function requestOtpServer(e164: string) {
+    const r = await fetch('/api/auth/request-otp', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ phone: e164 }),
+    });
+    if (!r.ok) {
+      const j = await r.json().catch(() => ({}));
+      throw new Error(j?.error || 'Failed to send OTP');
+    }
+    return r.json();
+  }
+  async function verifyOtpServer(e164: string, otp: string) {
+    const r = await fetch('/api/auth/verify-otp', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ phone: e164, code: otp }),
+    });
+    if (!r.ok) {
+      const j = await r.json().catch(() => ({}));
+      throw new Error(j?.error || 'Invalid OTP');
+    }
+    return r.json() as Promise<{ customToken: string; isNewUser?: boolean }>;
+  }
+
   async function handleSendOtp() {
     setError(null);
     if (!/^\+\d{6,15}$/.test(fullPhone)) {
@@ -270,11 +302,23 @@ function LoginPanel() {
     }
     setLoading('otp-send');
     try {
-      await sendOtp(fullPhone);
+      if (USE_SERVER_OTP) {
+        await requestOtpServer(fullPhone);
+      } else {
+        await sendOtp(fullPhone); // Firebase path (requires Blaze beyond test numbers)
+      }
       setOtpSent(true);
       setCooldown(RESEND_COOLDOWN);
     } catch (e: any) {
-      setError(e?.message || 'Failed to send OTP');
+      const msg = String(e?.message || '');
+      // Friendlier message for the common Firebase billing issue
+      if (msg.includes('auth/billing-not-enabled')) {
+        setError(
+          'Phone sign-in via Firebase requires the Blaze plan. Switch to our server OTP (set NEXT_PUBLIC_USE_SERVER_OTP=1) or add a billing account.'
+        );
+      } else {
+        setError(msg || 'Failed to send OTP');
+      }
     } finally {
       setLoading(null);
     }
@@ -293,11 +337,18 @@ function LoginPanel() {
     }
     setLoading('otp-verify');
     try {
-      const res = await verifyOtpDetailed(code);
-      flagOnboarding(!!(res as any)?.isNewUser);
+      if (USE_SERVER_OTP) {
+        const { customToken, isNewUser } = await verifyOtpServer(fullPhone, code);
+        await signInWithCustomTokenClient(customToken);
+        flagOnboarding(!!isNewUser);
+      } else {
+        const res = await verifyOtpDetailed(code);
+        flagOnboarding(!!(res as any)?.isNewUser);
+      }
       router.replace(target);
     } catch (e: any) {
-      setError(e?.message || 'Invalid OTP');
+      const msg = String(e?.message || '');
+      setError(msg || 'Invalid OTP');
     } finally {
       setLoading(null);
     }
@@ -319,7 +370,13 @@ function LoginPanel() {
       </div>
 
       <h1 className="mt-4 text-xl font-semibold text-gray-900">Welcome</h1>
-      <p className="text-sm text-gray-600 mt-1">Continue with your phone or Google account.</p>
+      <p className="text-sm text-gray-600 mt-1">
+        Continue with your phone{` `}
+        <span className="text-gray-500">
+          {USE_SERVER_OTP ? '(secure server OTP)' : '(Firebase OTP)'}
+        </span>
+        {` `}or Google.
+      </p>
 
       {/* Google */}
       <div className="mt-5">
@@ -418,8 +475,8 @@ function LoginPanel() {
         <Link href="/" className="hover:text-gray-900">Back to home</Link>
       </div>
 
-      {/* Invisible reCAPTCHA anchor */}
-      <div id="recaptcha-container" className="hidden" />
+      {/* Invisible reCAPTCHA anchor (only used for Firebase OTP) */}
+      {!USE_SERVER_OTP && <div id="recaptcha-container" className="hidden" />}
     </div>
   );
 }

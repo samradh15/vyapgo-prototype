@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import Image from 'next/image';
 import { onAuthStateChanged } from 'firebase/auth';
-import { auth } from '@/lib/auth-client';
+import { auth, linkGoogleToCurrent, startLinkPhone, verifyLinkPhone } from '@/lib/auth-client';
 import {
   ensureUserDoc,
   fetchUserDoc,
@@ -23,9 +23,9 @@ type FieldKey =
   | 'inventorySize'
   | 'primaryGoal';
 
-const BUSINESS_TYPES = ['Kirana / Grocery','Restaurant','Salon','Pharmacy','Boutique','Other'];
-const INVENTORY_SIZES = ['<50','50-200','200+'];
-const GOALS = ['Faster billing','Online orders','Analytics & insights','Inventory tracking'];
+const BUSINESS_TYPES = ['Kirana / Grocery', 'Restaurant', 'Salon', 'Pharmacy', 'Boutique', 'Other'];
+const INVENTORY_SIZES = ['<50', '50-200', '200+'];
+const GOALS = ['Faster billing', 'Online orders', 'Analytics & insights', 'Inventory tracking'];
 
 export default function AccountPage() {
   const router = useRouter();
@@ -42,6 +42,9 @@ export default function AccountPage() {
   // which row is in edit mode?
   const [editing, setEditing] = useState<FieldKey | 'displayName' | null>(null);
 
+  // linked providers
+  const [providers, setProviders] = useState<string[]>([]);
+
   useEffect(() => {
     const unsub = onAuthStateChanged(auth, async (user) => {
       if (!user) {
@@ -49,6 +52,7 @@ export default function AccountPage() {
         return;
       }
       setUid(user.uid);
+      setProviders(user.providerData?.map((p) => p.providerId) || []);
       setError(null);
       setLoading(true);
       try {
@@ -91,13 +95,14 @@ export default function AccountPage() {
     setSaving(true);
     setError(null);
     try {
+      const trimmed = displayName.trim();
       const nextOnboarding: UserProfile['onboarding'] = {
         ...answers,
-        shopName: displayName,
+        shopName: trimmed,
         ...(onboardingComplete ? { complete: true } : {}),
       };
-      await updateUser(uid, { displayName, onboarding: nextOnboarding });
-      setAnswers((a) => ({ ...a, shopName: displayName }));
+      await updateUser(uid, { displayName: trimmed, onboarding: nextOnboarding });
+      setAnswers((a) => ({ ...a, shopName: trimmed }));
       setEditing(null);
     } catch (e: any) {
       setError(e?.message || 'Could not save.');
@@ -163,17 +168,16 @@ export default function AccountPage() {
       </div>
 
       {/* Details card with circular logo on the right */}
-      <div className="mt-8 rounded-2xl bg-white border border-amber-200/50 shadow-sm">
-        {/* Card header */}
+      <div className="mt-8 rounded-2xl bg-white border border-amber-200/50 shadow-sm overflow-hidden">
+        <div className="h-[3px] w-full" style={{ background: BRAND }} />
         <div className="px-6 py-4 border-b border-amber-100/60 flex items-center justify-between">
           <div className="font-semibold text-gray-900">Business details</div>
           <div className="flex items-center gap-3">
-            <div className="text-xs text-gray-500">Logo</div>
+            <div className="text-xs text-gray-600">Logo</div>
             <MonogramCircle initials={initials || 'VG'} />
           </div>
         </div>
 
-        {/* Fields */}
         <div className="divide-y divide-gray-100">
           {/* Shop name */}
           <Row
@@ -195,6 +199,7 @@ export default function AccountPage() {
                 </div>
               ) : null
             }
+            saving={saving}
           />
 
           {/* Business type */}
@@ -214,6 +219,7 @@ export default function AccountPage() {
                 />
               ) : null
             }
+            saving={saving}
           />
 
           {/* Location */}
@@ -233,6 +239,7 @@ export default function AccountPage() {
                 />
               ) : null
             }
+            saving={saving}
           />
 
           {/* Selling channels */}
@@ -252,6 +259,7 @@ export default function AccountPage() {
                 />
               ) : null
             }
+            saving={saving}
           />
 
           {/* Inventory size */}
@@ -271,6 +279,7 @@ export default function AccountPage() {
                 />
               ) : null
             }
+            saving={saving}
           />
 
           {/* Primary goal */}
@@ -290,8 +299,220 @@ export default function AccountPage() {
                 />
               ) : null
             }
+            saving={saving}
           />
         </div>
+      </div>
+
+      {/* Sign-in methods card */}
+      <AuthMethodsCard providers={providers} onProvidersUpdate={setProviders} />
+    </div>
+  );
+}
+
+/* ---------- Auth Methods Card ---------- */
+
+function AuthMethodsCard({
+  providers,
+  onProvidersUpdate,
+}: {
+  providers: string[];
+  onProvidersUpdate: (p: string[]) => void;
+}) {
+  const hasGoogle = providers.includes('google.com');
+  const hasPhone = providers.includes('phone');
+
+  const [working, setWorking] = useState<null | 'google' | 'phone-send' | 'phone-verify'>(null);
+  const [msg, setMsg] = useState<string | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+
+  const [dial, setDial] = useState('+91');
+  const [phone, setPhone] = useState('');
+  const [otpSent, setOtpSent] = useState(false);
+  const [code, setCode] = useState('');
+
+  const e164 = `${dial}${phone.replace(/\D/g, '')}`;
+
+  async function refreshProviders() {
+    try {
+      await auth.currentUser?.reload();
+      onProvidersUpdate(auth.currentUser?.providerData.map((p) => p.providerId) || []);
+    } catch {}
+  }
+
+  async function handleLinkGoogle() {
+    setErr(null);
+    setMsg(null);
+    setWorking('google');
+    try {
+      await linkGoogleToCurrent();
+      setMsg('Google account linked.');
+      await refreshProviders();
+    } catch (e: any) {
+      setErr(e?.message || 'Could not link Google');
+    } finally {
+      setWorking(null);
+    }
+  }
+
+  async function handleSendOtp() {
+    setErr(null);
+    setMsg(null);
+    if (!/^\+\d{6,15}$/.test(e164)) {
+      setErr('Enter a valid phone number');
+      return;
+    }
+    setWorking('phone-send');
+    try {
+      await startLinkPhone(e164, 'recaptcha-link');
+      setOtpSent(true);
+      setMsg('OTP sent to your phone.');
+    } catch (e: any) {
+      setErr(e?.message || 'Could not send OTP');
+    } finally {
+      setWorking(null);
+    }
+  }
+
+  async function handleVerifyOtp() {
+    setErr(null);
+    setMsg(null);
+    if (!/^\d{4,8}$/.test(code)) {
+      setErr('Enter the OTP code');
+      return;
+    }
+    setWorking('phone-verify');
+    try {
+      await verifyLinkPhone(code);
+      setMsg('Phone number linked.');
+      setOtpSent(false);
+      setPhone('');
+      setCode('');
+      await refreshProviders();
+    } catch (e: any) {
+      setErr(e?.message || 'Could not verify OTP');
+    } finally {
+      setWorking(null);
+    }
+  }
+
+  return (
+    <div className="mt-8 rounded-2xl bg-white border border-amber-200/50 shadow-sm overflow-hidden">
+      <div className="h-[3px] w-full" style={{ background: BRAND }} />
+      <div className="px-6 py-4 border-b border-amber-100/60 flex items-center justify-between">
+        <div className="font-semibold text-gray-900">Sign-in methods</div>
+      </div>
+
+      <div className="p-6 space-y-6">
+        {/* Google */}
+        <div className="flex items-center justify-between gap-4">
+          <div>
+            <div className="font-medium text-gray-900">Google</div>
+            <div className="text-sm text-gray-600">
+              {hasGoogle ? 'Connected to your account.' : 'Link your Google account for easy sign-in.'}
+            </div>
+          </div>
+          {hasGoogle ? (
+            <span className="text-xs px-2.5 h-8 inline-flex items-center rounded-full border border-emerald-300 bg-emerald-50 text-emerald-900">
+              Linked
+            </span>
+          ) : (
+            <button
+              onClick={handleLinkGoogle}
+              disabled={!!working}
+              className="h-9 px-4 rounded-lg text-white font-semibold disabled:opacity-60"
+              style={{ background: BRAND }}
+            >
+              {working === 'google' ? 'Linking…' : 'Link Google'}
+            </button>
+          )}
+        </div>
+
+        {/* Phone */}
+        <div className="flex items-start justify-between gap-4">
+          <div className="flex-1">
+            <div className="font-medium text-gray-900">Phone (OTP)</div>
+            <div className="text-sm text-gray-600">
+              {hasPhone
+                ? 'A phone number is linked to your account.'
+                : 'Link a phone number to sign in with OTP.'}
+            </div>
+
+            {!hasPhone && (
+              <div className="mt-3">
+                <label className="text-xs font-medium text-gray-700">Phone number</label>
+                <div className="mt-1.5 flex gap-2">
+                  <select
+                    className="h-10 rounded-xl border border-gray-200 bg-white px-3 text-gray-800 text-sm"
+                    value={dial}
+                    onChange={(e) => setDial(e.target.value)}
+                    disabled={!!working}
+                  >
+                    <option value="+91">+91</option>
+                    <option value="+1">+1</option>
+                    <option value="+44">+44</option>
+                  </select>
+                  <input
+                    type="tel"
+                    inputMode="numeric"
+                    placeholder="98765 43210"
+                    className="h-10 flex-1 rounded-xl border border-gray-200 bg-white px-3 text-gray-800 placeholder:text-gray-400 outline-none focus:ring-2 focus:ring-amber-300/60"
+                    value={phone}
+                    onChange={(e) => setPhone(e.target.value)}
+                    disabled={!!working}
+                  />
+                </div>
+
+                {!otpSent ? (
+                  <button
+                    onClick={handleSendOtp}
+                    disabled={!!working}
+                    className="mt-3 h-9 px-4 rounded-lg text-white font-semibold disabled:opacity-60"
+                    style={{ background: BRAND }}
+                  >
+                    {working === 'phone-send' ? 'Sending OTP…' : 'Send OTP'}
+                  </button>
+                ) : (
+                  <div className="mt-3 flex items-center gap-2">
+                    <input
+                      type="tel"
+                      inputMode="numeric"
+                      placeholder="Enter OTP"
+                      className="h-10 flex-1 rounded-xl border border-gray-200 bg-white px-3 text-gray-800 placeholder:text-gray-400 outline-none focus:ring-2 focus:ring-amber-300/60"
+                      value={code}
+                      onChange={(e) => setCode(e.target.value)}
+                      disabled={!!working}
+                    />
+                    <button
+                      onClick={handleVerifyOtp}
+                      disabled={!!working}
+                      className="h-9 px-4 rounded-lg text-white font-semibold disabled:opacity-60"
+                      style={{ background: BRAND }}
+                    >
+                      {working === 'phone-verify' ? 'Verifying…' : 'Verify & link'}
+                    </button>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+
+          {hasPhone ? (
+            <span className="text-xs px-2.5 h-8 inline-flex items-center rounded-full border border-emerald-300 bg-emerald-50 text-emerald-900">
+              Linked
+            </span>
+          ) : null}
+        </div>
+
+        {(msg || err) && (
+          <div className="text-sm">
+            {msg && <div className="text-emerald-700">{msg}</div>}
+            {err && <div className="text-red-600">{err}</div>}
+          </div>
+        )}
+
+        {/* Recaptcha anchor for linking (invisible) */}
+        <div id="recaptcha-link" className="hidden" />
       </div>
     </div>
   );
@@ -299,7 +520,6 @@ export default function AccountPage() {
 
 /* ---------- Components ---------- */
 
-/** Circular monogram preview */
 function MonogramCircle({ initials }: { initials: string }) {
   return (
     <div
@@ -324,8 +544,9 @@ function Row(props: {
   onEdit: () => void;
   onCancel: () => void;
   action?: React.ReactNode;
+  saving?: boolean;
 }) {
-  const { label, value, editing, onEdit, onCancel, action } = props;
+  const { label, value, editing, onEdit, onCancel, action, saving } = props;
   return (
     <div className="px-6 py-4 flex items-start justify-between gap-4">
       <div>
@@ -335,11 +556,19 @@ function Row(props: {
       <div className="flex items-center gap-3">
         {action}
         {editing ? (
-          <button className="text-sm text-gray-600 hover:text-gray-900" onClick={onCancel}>
+          <button
+            className="text-sm text-gray-600 hover:text-gray-900"
+            onClick={onCancel}
+            disabled={!!saving}
+          >
             Close
           </button>
         ) : (
-          <button className="text-sm text-gray-600 hover:text-gray-900" onClick={onEdit}>
+          <button
+            className="text-sm text-gray-600 hover:text-gray-900"
+            onClick={onEdit}
+            disabled={!!saving}
+          >
             Edit
           </button>
         )}
@@ -373,6 +602,7 @@ function TextInline({
   placeholder?: string;
 }) {
   const [val, setVal] = useState(initial);
+  useEffect(() => setVal(initial), [initial]); // keep in sync if parent updates
   return (
     <div className="flex gap-2 items-center">
       <input
@@ -381,7 +611,7 @@ function TextInline({
         onChange={(e) => setVal(e.target.value)}
         placeholder={placeholder}
       />
-      <SaveBtn onClick={() => onSave(val)} saving={saving} />
+      <SaveBtn onClick={() => onSave(val.trim())} saving={saving} />
     </div>
   );
 }
@@ -398,6 +628,7 @@ function SelectInline({
   saving: boolean;
 }) {
   const [val, setVal] = useState(value);
+  useEffect(() => setVal(value), [value]); // keep in sync if parent updates
   return (
     <div className="flex gap-2 items-center">
       <select
@@ -431,6 +662,7 @@ function MultiChipsInline({
   saving: boolean;
 }) {
   const [sel, setSel] = useState<string[]>(initial);
+  useEffect(() => setSel(initial), [initial]); // keep in sync if parent updates
   const toggle = (v: string) =>
     setSel((prev) => (prev.includes(v) ? prev.filter((x) => x !== v) : [...prev, v]));
   return (
@@ -441,8 +673,10 @@ function MultiChipsInline({
           <button
             key={o}
             onClick={() => toggle(o)}
-            className={`h-9 px-3 rounded-full border text-sm ${
-              active ? 'border-emerald-400 bg-emerald-50 text-emerald-900' : 'border-gray-300'
+            className={`h-9 px-3 rounded-full border text-sm transition ${
+              active
+                ? 'border-emerald-400 bg-emerald-50 text-emerald-900'
+                : 'border-gray-300 hover:border-gray-400'
             }`}
           >
             {o}

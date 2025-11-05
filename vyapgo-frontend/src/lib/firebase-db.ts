@@ -41,6 +41,7 @@ export type OnboardingAnswers = {
 };
 
 export type UserProfile = {
+  onboardingCompleted: boolean;
   uid: string;
 
   email?: string | null;
