@@ -1,4 +1,5 @@
 'use client';
+export const dynamic = 'force-dynamic';
 
 import './globals.css';
 import { Inter } from 'next/font/google';
@@ -96,7 +97,7 @@ function HomeOnboardingGate({ active }: { active: boolean }) {
     try {
       // Dismiss just for this browser session
       window.sessionStorage.setItem('vyap:onboarding:dismissed', '1');
-    } catch {}
+    } catch { }
   };
 
   if (!show) return null;
