@@ -1,4 +1,5 @@
 'use client';
+export const dynamic = 'force-dynamic';
 
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { motion, AnimatePresence, useReducedMotion } from 'framer-motion';
@@ -192,7 +193,7 @@ export default function MarketplaceLanding() {
     const SR = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
     const recog = new SR();
     recog.lang = 'hi-IN';
-    recog.continuous = false    ;
+    recog.continuous = false;
     recog.interimResults = false;
 
     setListening(true);
@@ -471,11 +472,10 @@ function HeaderThemed() {
 
   return (
     <motion.nav
-      className={`fixed top-0 left-0 right-0 z-40 transition-all duration-300 ease-out ${
-        isScrolled
+      className={`fixed top-0 left-0 right-0 z-40 transition-all duration-300 ease-out ${isScrolled
           ? 'bg-gradient-to-r from-orange-100/90 via-yellow-100/90 to-green-100/90 backdrop-blur-md shadow-sm'
           : 'bg-gradient-to-r from-orange-50/80 via-yellow-50/80 to-green-50/80 backdrop-blur'
-      }`}
+        }`}
       initial={{ y: reduceMotion ? 0 : -60, opacity: reduceMotion ? 1 : 0 }}
       animate={{ y: 0, opacity: 1 }}
       transition={{ duration: reduceMotion ? 0 : 0.5, ease: 'easeOut' }}
@@ -595,11 +595,10 @@ function SearchBar({
           type="button"
           onClick={onVoice}
           disabled={!micSupported || listening}
-          className={`px-3 py-2 rounded-lg text-white transition ${
-            listening
+          className={`px-3 py-2 rounded-lg text-white transition ${listening
               ? 'bg-red-500'
               : 'bg-gradient-to-r from-orange-500 to-yellow-500 hover:from-orange-600 hover:to-yellow-600'
-          }`}
+            }`}
           title={micSupported ? 'Voice search' : 'Microphone not available'}
         >
           <span className="inline-flex items-center gap-2">
@@ -759,8 +758,8 @@ function PhonePreview() {
                 >
                   {i === 0 ? '3-ply Corrugated Boxes (12×12×12)'
                     : i === 1 ? 'Thermal Receipt Rolls 57×30'
-                    : i === 2 ? 'LED Tube Light 20W (Pack)'
-                    : 'Men’s Cotton Polo T-Shirts (200 GSM)'}
+                      : i === 2 ? 'LED Tube Light 20W (Pack)'
+                        : 'Men’s Cotton Polo T-Shirts (200 GSM)'}
                 </div>
                 <div className="text-[11px] text-gray-600">
                   MOQ {i === 0 ? 500 : i === 1 ? 100 : i === 2 ? 50 : 100} • {i === 0 ? 'Delhi' : i === 1 ? 'Mumbai' : i === 2 ? 'Noida' : 'Tiruppur'}
@@ -771,9 +770,8 @@ function PhonePreview() {
                     ₹{i === 0 ? '14–18' : i === 1 ? '850–950' : i === 2 ? '135–160' : '230–290'}
                   </div>
                   <div
-                    className={`text-[11px] px-2 py-1 rounded-md text-white ${
-                      i === 0 ? 'bg-gradient-to-r from-orange-500 to-yellow-500' : 'bg-gray-700'
-                    }`}
+                    className={`text-[11px] px-2 py-1 rounded-md text-white ${i === 0 ? 'bg-gradient-to-r from-orange-500 to-yellow-500' : 'bg-gray-700'
+                      }`}
                   >
                     Get Quote
                   </div>
