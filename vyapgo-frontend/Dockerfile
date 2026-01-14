@@ -14,14 +14,22 @@ RUN apt-get update && apt-get install -y \
 # 2. Install dependencies (cached)
 FROM base AS deps
 COPY package.json package-lock.json ./
-# --- CHANGED LINE BELOW ---
-RUN npm ci --legacy-peer-deps 
-# --------------------------
+RUN npm ci --legacy-peer-deps
 
 # 3. Build the application
 FROM base AS builder
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
+
+# --- NEW SECTION: Allow Build to see Railway Variables ---
+ARG NEXT_PUBLIC_FIREBASE_API_KEY
+ARG NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN
+ARG NEXT_PUBLIC_FIREBASE_PROJECT_ID
+ARG NEXT_PUBLIC_FIREBASE_APP_ID
+ARG NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID
+ARG NEXT_PUBLIC_FIREBASE_MEASUREMENT_ID
+# ---------------------------------------------------------
+
 RUN npm run build
 
 # 4. Production Image
