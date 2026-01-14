@@ -2,7 +2,6 @@
 import { initializeApp, getApps, getApp, FirebaseApp } from "firebase/app";
 import { getAuth } from "firebase/auth";
 
-// Safely load env vars
 const firebaseConfig = {
   apiKey: process.env.NEXT_PUBLIC_FIREBASE_API_KEY || "",
   authDomain: process.env.NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN || "",
@@ -12,27 +11,13 @@ const firebaseConfig = {
   appId: process.env.NEXT_PUBLIC_FIREBASE_APP_ID || "",
 };
 
-// Only initialize if config is valid and running in browser or runtime environment
-let firebaseApp: FirebaseApp;
-
-if (
-  typeof window !== "undefined" || // client-side
-  (process.env.NODE_ENV === "development" && getApps().length === 0) // dev build
-) {
-  firebaseApp = !getApps().length ? initializeApp(firebaseConfig) : getApp();
-} else {
-  // Safe fallback to prevent crashes during server build or static export
-  firebaseApp = getApps().length ? getApp() : ({} as FirebaseApp);
-}
+// FIX: Only initialize if the key exists (prevents build crash)
+const firebaseApp =
+  getApps().length === 0 && process.env.NEXT_PUBLIC_FIREBASE_API_KEY
+    ? initializeApp(firebaseConfig)
+    : getApps()[0]; // or undefined handling
 
 export { firebaseApp };
 
-// ✅ Auth initialization guarded — won’t break build if app isn’t real yet
-export const auth =
-  firebaseApp && (firebaseApp as any).name
-    ? getAuth(firebaseApp)
-    : ({} as ReturnType<typeof getAuth>);
-
-if (auth && (auth as any).languageCode !== undefined) {
-  auth.languageCode = "en";
-}
+// Export services safely
+export const auth = firebaseApp ? getAuth(firebaseApp) : null;
